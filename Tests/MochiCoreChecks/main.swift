@@ -2465,6 +2465,30 @@ func GrokBotSessionPublishesTheOpenTurn() throws {
     check((again?["tasks"] as? [String: Any])?[cursorID] != nil)
 }
 
+func DownloadQuarantineClearsTheDownloadMark() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-quarantine-\(UUID().uuidString)", isDirectory: true)
+    let nested = root.appendingPathComponent("Contents/MacOS", isDirectory: true)
+    let sibling = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-quarantine-sibling-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    let hook = nested.appendingPathComponent("MochiHookCLI")
+    try Data("hook".utf8).write(to: hook)
+    try Data("other".utf8).write(to: sibling)
+    DownloadQuarantine.mark(root)
+    DownloadQuarantine.mark(hook)
+    DownloadQuarantine.mark(sibling)
+    check(DownloadQuarantine.isMarked(at: root))
+    check(DownloadQuarantine.clear(at: root))
+    check(DownloadQuarantine.isMarked(at: root) == false)
+    check(DownloadQuarantine.isMarked(at: sibling))
+    check(DownloadQuarantine.offerConnect(cursorConnected: false, codexConnected: false, grokConnected: false))
+    check(DownloadQuarantine.offerConnect(cursorConnected: true, codexConnected: false, grokConnected: false) == false)
+    check(DownloadQuarantine.offerConnect(cursorConnected: false, codexConnected: true, grokConnected: false) == false)
+    check(DownloadQuarantine.offerConnect(cursorConnected: false, codexConnected: false, grokConnected: true) == false)
+    check(DownloadQuarantine.relocatedBundle(current: root) == nil)
+    try FileManager.default.removeItem(at: root)
+    try FileManager.default.removeItem(at: sibling)
+}
+
 func ConnectorRegistryNamesCursorAndCodex() {
     let ids = AgentConnectorRegistry.primary.map(\.id)
     check(ids == ["cursor", "codex", "grok-bot"])
@@ -2646,6 +2670,7 @@ try HookRetargetPointsAtTheOpenApp()
 try PassiveHooksReportTheShortlist()
 try GeminiHookMapsTheShortlist()
 try GrokBotSessionPublishesTheOpenTurn()
+try DownloadQuarantineClearsTheDownloadMark()
 ConnectorRegistryNamesCursorAndCodex()
 try TaskCuesPlayOncePerTransition()
 LiveHooksFixWhenAsked()

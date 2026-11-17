@@ -109,6 +109,10 @@ final class IslandController: NSObject, WKScriptMessageHandler, WKNavigationDele
     )
     private var webView: ClickThroughWebView!
     private let session = AppSession()
+
+    func sessionRelocatedDownload() -> URL? {
+        session.relocatedDownload
+    }
     private let taskWatch = TaskFileWatch(
         fileURL: AppConfig.cursorDirectory.appendingPathComponent("mochi-island-tasks.json")
     )
@@ -155,6 +159,9 @@ final class IslandController: NSObject, WKScriptMessageHandler, WKNavigationDele
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        if session.offerAgentSetup() {
+            revealSettings(tab: .agents)
+        }
     }
 
     private func configurePanel() {
@@ -697,6 +704,7 @@ final class Runtime: NSObject, NSApplicationDelegate {
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon
         }
+        if relaunchDownloadedCopy() { return }
         island.start()
         watchExecutable()
         if CommandLine.arguments.contains("--show-settings") {
@@ -714,6 +722,24 @@ final class Runtime: NSObject, NSApplicationDelegate {
             }
             island.revealSettings(tab: tab)
         }
+    }
+
+    /// macOS runs a freshly downloaded app from a temporary folder. Clear the download
+    /// mark on the real app and open that one, so Connect does not follow the temporary copy.
+    private func relaunchDownloadedCopy() -> Bool {
+        guard let original = island.sessionRelocatedDownload() else { return false }
+        let executable = original.appendingPathComponent("Contents/MacOS/MochiIsland")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else { return false }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["--replace-pid", String(ProcessInfo.processInfo.processIdentifier)]
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        NSApp.terminate(nil)
+        return true
     }
 
     /// A newer `MochiIsland` binary on disk replaces this process. The build copies

@@ -15,6 +15,8 @@ final class AppSession {
     private var hintCache: [CursorTask] = []
     private var hintScannedAt: Double = 0
     private var hintScanRunning = false
+    /// Set when macOS opened a temporary copy of a download. Hooks wait for the real app.
+    private(set) var relocatedDownload: URL?
 
     init() {
         petStore = PetStore.live()
@@ -32,7 +34,24 @@ final class AppSession {
             ).map(\.id)
         )
         slots = slotDisk.load(activeTaskIDs: active)
-        repairInstalledHooks()
+        let current = Bundle.main.bundleURL
+        if let original = DownloadQuarantine.relocatedBundle(current: current) {
+            if DownloadQuarantine.clear(at: original) {
+                relocatedDownload = original
+            }
+        } else {
+            DownloadQuarantine.clear(at: current)
+            repairInstalledHooks()
+        }
+    }
+
+    /// Early testers land on Agents until Cursor, Codex, or Grok Bot is connected.
+    func offerAgentSetup() -> Bool {
+        let binary = hookBinary()
+        let cursor = AgentConnectorRegistry.connector(for: "cursor")?.status(binaryURL: binary).connected == true
+        let codex = AgentConnectorRegistry.connector(for: "codex")?.status(binaryURL: binary).connected == true
+        let grok = AgentConnectorRegistry.connector(for: "grok-bot")?.status(binaryURL: binary).connected == true
+        return DownloadQuarantine.offerConnect(cursorConnected: cursor, codexConnected: codex, grokConnected: grok)
     }
 
     /// Primary connectors (Cursor, Codex, …) must run the MochiHookCLI inside this app.

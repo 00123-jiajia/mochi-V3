@@ -496,7 +496,7 @@ struct SettingsRoot: View {
             Button("Connect") { model.confirmPrivacyConnect() }
             Button("Cancel", role: .cancel) { model.cancelPrivacyConnect() }
         } message: {
-            Text("Mochi will write its hook into ~/.cursor/hooks.json on this Mac only. Chats are not uploaded. Shell and MCP still need Allow or Deny beside the kitten.")
+            Text("Mochi will write its hook into ~/.cursor/hooks.json on this Mac only. Chats stay on this Mac. Shell and MCP continue on their own. A choice still shows beside the kitten.")
         }
         // Glass is the AppKit NSGlassEffectView panel container; keep layout only here.
         .contentShape(RoundedRectangle(cornerRadius: SettingsChromeMetrics.cornerRadius, style: .continuous))
@@ -725,7 +725,7 @@ struct SettingsRoot: View {
         Form {
             Section("Cursor") {
                 LabeledContent("Status", value: model.cursorStatus)
-                Text("Connect one-click installs Mochi's hook for this app. You do not edit hook files. Chats are not uploaded. Shell and MCP still need Allow or Deny beside the kitten.")
+                Text("Connect installs this app's hook. Chats stay on this Mac. Shell and MCP continue on their own. A choice still shows beside the kitten.")
                     .foregroundStyle(.secondary)
                 Button(model.cursorButton) { model.connect("cursor") }
                 Toggle("Notice recent local agent files", isOn: $model.scanTranscripts)
