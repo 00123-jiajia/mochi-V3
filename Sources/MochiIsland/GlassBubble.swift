@@ -104,15 +104,21 @@ final class BubbleModel: ObservableObject {
     @Published var appName = ""
     @Published var source = "cursor"
     @Published var status = ""
+    @Published var taskStatus = ""
     @Published var summary = ""
+    @Published var answer = ""
+    @Published var choicePrompt = ""
+    @Published var awaitingAnswer = false
+    @Published var answerExpanded = false
     @Published var updated: Double = 0
     @Published var options: [BubbleChoice] = []
     @Published var icon: NSImage?
     @Published var beakY: CGFloat = 28
     @Published var pointsRight = true
-    @Published var bodyWidth: CGFloat = 210
+    @Published var bodyWidth: CGFloat = 270
     @Published var summaryHeight: CGFloat = 14
     @Published var computedHeight: CGFloat = 44
+    @Published var maxHeight: CGFloat = 360
     var taskID = ""
     var requestID = ""
     var questionID = ""
@@ -120,6 +126,7 @@ final class BubbleModel: ObservableObject {
     var onChoice: ((BubbleChoice) -> Void)?
     var onOpen: (() -> Void)?
     var onPick: ((String) -> Void)?
+    var onLayout: (() -> Void)?
 }
 
 struct BubbleFace: View {
@@ -175,89 +182,187 @@ struct BubbleFace: View {
         }
     }
 
-    /// Header / status / summary (and empty card chrome) open the source chat.
-    /// Allow / Deny and other choice buttons keep their own actions.
+    /// The icon row opens the source app. 展开 grows the card downward and scrolls.
+    /// Allow / Deny keep their own actions.
     private var card: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .center, spacing: 6) {
-                    icon(model.icon, source: model.source, side: 16)
-                    Text(model.title.isEmpty ? model.appName : model.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 4)
-                    if !model.appName.isEmpty {
-                        Text(model.appName)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.primary.opacity(0.1)))
-                    }
-                    if !ageLabel.isEmpty {
-                        Text(ageLabel)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: CardColumn.gap) {
+                icon(model.icon, source: model.source, side: 16)
+                    .frame(width: CardColumn.mark, alignment: .leading)
+                Text(headerName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: CardColumn.gap)
                 if !model.status.isEmpty {
                     Text(model.status)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(statusTint)
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(statusTint.opacity(0.16)))
+                        .accessibilityLabel(model.status)
                 }
-                if !model.summary.isEmpty {
-                    Text(model.summary)
+                if !ageLabel.isEmpty {
+                    Text(ageLabel)
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.tail)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .contentShape(Rectangle())
             .onTapGesture { model.onOpen?() }
+            if model.answerExpanded {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        qaRow(label: "Q：", text: model.summary, lines: 20, pending: false)
+                        answerBody(lines: 40)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .scrollContentBackground(.hidden)
+                .frame(height: max(28, model.summaryHeight))
+            } else {
+                qaRow(label: "Q：", text: model.summary, lines: 2, pending: false)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.onOpen?() }
+                answerBody(lines: thinking ? 1 : 2)
+            }
+            if canExpand {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Button(model.answerExpanded ? "收起" : "展开") {
+                        model.answerExpanded.toggle()
+                        model.onLayout?()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    .accessibilityLabel(model.answerExpanded ? "收起" : "展开")
+                }
+            }
             if !model.options.isEmpty {
-                VStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !model.choicePrompt.isEmpty {
+                        Text(model.choicePrompt)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, CardColumn.mark + CardColumn.gap)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     ForEach(model.options) { option in
-                        Button {
-                            model.onChoice?(option)
-                        } label: {
-                            Text(option.label)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 8)
-                                .background {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(Color.primary.opacity(0.1))
-                                }
+                        HStack(spacing: CardColumn.gap) {
+                            Color.clear.frame(width: CardColumn.mark)
+                            Button {
+                                model.onChoice?(option)
+                            } label: {
+                                Text(option.label)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.primary.opacity(0.1))
+                                    }
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
         }
-        // Extra inset on the beak side, toward the kitten, so the blurb stays in the solid glass.
-        .padding(.leading, AppConfig.bubblePadX + (model.pointsRight ? 0 : 16))
-        .padding(.trailing, AppConfig.bubblePadX + (model.pointsRight ? 16 : 0))
-        .padding(.vertical, AppConfig.bubblePadY)
+        .padding(AppConfig.bubblePadX)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Product name beside the icon. It shares the body column with Q and A.
+    private var headerName: String {
+        let name = model.appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        return SlotFace.displayName(for: model.source)
     }
 
     private var ageLabel: String {
         BubbleAge.relative(updated: model.updated, now: Date().timeIntervalSince1970)
+    }
+
+    private var thinking: Bool {
+        model.awaitingAnswer && model.answer.isEmpty
+    }
+
+    private var canExpand: Bool {
+        !thinking && (model.summary.count > 36 || model.answer.count > 36)
+    }
+
+    private var statusTint: Color {
+        switch model.taskStatus {
+        case "running": return AgentStatusRing.thinking
+        case "wait", "fail": return AgentStatusRing.stuck
+        case "done": return AgentStatusRing.done
+        default: return Color.primary
+        }
+    }
+
+    private func answerBody(lines: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: CardColumn.gap) {
+            markLabel("A：")
+            if thinking {
+                BouncingEllipsis()
+                    .offset(y: 1)
+            } else {
+                Text(model.answer)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(lines)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    /// The mark stays one column wide. A sibling with no text baseline must not squeeze it into an ellipsis.
+    private func markLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(width: CardColumn.mark, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
+    }
+
+    private func qaRow(label: String, text: String, lines: Int, pending: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: CardColumn.gap) {
+            markLabel(label)
+            if pending {
+                BouncingEllipsis()
+                    .offset(y: 1)
+            } else {
+                Text(text)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(lines)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var picker: some View {
@@ -290,6 +395,17 @@ struct BubbleFace: View {
             }
         }
     }
+}
+
+/// The Q / A mark is the glyph width. Body text, the product name, and option plates start one gap after it.
+/// Status, time, and 展开 share the trailing edge.
+private enum CardColumn {
+    static let gap: CGFloat = 4
+    static let mark: CGFloat = {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let width = ["Q：", "A："].map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 20
+        return ceil(width)
+    }()
 }
 
 enum BubbleMeasure {
@@ -385,6 +501,8 @@ final class BubblePanel: NSObject {
     }
 
     func show(anchor: CGRect, capsule: CGRect, screen: CGRect) {
+        let room = max(AppConfig.bubbleMinHeight, anchor.maxY - screen.minY - 8)
+        model.maxHeight = min(screen.height * 0.4, room)
         let body = measuredBody()
         let size = CGSize(width: body.width + AppConfig.beakWidth, height: body.height)
         let placed = BubblePlacer.place(anchor: anchor, capsule: capsule, size: size, screen: screen)
@@ -417,33 +535,85 @@ final class BubblePanel: NSObject {
     }
 
     private func prepare(width: CGFloat) {
-        let textWidth = max(40, width - AppConfig.bubblePadX * 2)
+        let textWidth = max(40, width - AppConfig.bubblePadX * 2 - CardColumn.mark - CardColumn.gap)
         let screen = NSScreen.main?.frame.height ?? 900
-        let summaryCap = max(14, screen / 2)
         let summaryFont = NSFont.systemFont(ofSize: 11, weight: .regular)
         let titleFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        model.summaryHeight = model.summary.isEmpty
-            ? 0
-            : min(summaryCap, BubbleMeasure.textHeight(model.summary, width: textWidth, font: summaryFont, lines: 1))
-        let title = BubbleMeasure.textHeight(model.title.isEmpty ? model.appName : model.title, width: textWidth - 22, font: titleFont, lines: 1)
+        let thinking = model.awaitingAnswer && model.answer.isEmpty
+        let questionLines = model.answerExpanded ? 20 : 2
+        let questionHeight = BubbleMeasure.textHeight(
+            model.summary.isEmpty ? "Q：" : "Q：\(model.summary)",
+            width: textWidth,
+            font: summaryFont,
+            lines: questionLines
+        )
+        let answerHeight: CGFloat
+        if thinking || model.answer.isEmpty {
+            answerHeight = 14
+        } else if model.answerExpanded {
+            answerHeight = max(14, BubbleMeasure.textHeight("A：\(model.answer)", width: textWidth, font: summaryFont, lines: 40))
+        } else {
+            answerHeight = min(28, max(14, BubbleMeasure.textHeight("A：\(model.answer)", width: textWidth, font: summaryFont, lines: 2)))
+        }
+        let canExpand = !thinking && (model.summary.count > 36 || model.answer.count > 36)
+        let toggle: CGFloat = canExpand ? 18 : 0
+        let title = BubbleMeasure.textHeight(model.title.isEmpty ? model.appName : model.title, width: textWidth, font: titleFont, lines: 1)
         var choices: CGFloat = 0
         if !model.options.isEmpty {
+            if !model.choicePrompt.isEmpty {
+                choices += BubbleMeasure.textHeight(model.choicePrompt, width: textWidth, font: summaryFont, lines: 2) + 6
+            }
             for option in model.options {
                 choices += BubbleMeasure.textHeight(option.label, width: textWidth - 20, font: titleFont, lines: 4) + 16 + 6
             }
         }
-        let status: CGFloat = model.status.isEmpty ? 0 : 14
-        let preview: CGFloat = model.summary.isEmpty ? 0 : 18
         switch model.kind {
         case .picker:
             model.computedHeight = max(AppConfig.bubbleMinHeight, 28 + AppConfig.bubblePadY * 2)
         case .label:
             model.computedHeight = max(AppConfig.bubbleMinHeight, title + AppConfig.bubblePadY * 2)
         case .card, .alert:
-            let gaps: CGFloat = (status > 0 ? 6 : 0) + (preview > 0 ? 6 : 0)
-            let body = AppConfig.bubblePadY * 2 + 18 + preview + status + gaps + choices + 8
-            model.computedHeight = max(AppConfig.bubbleMinHeight, body)
+            let header: CGFloat = 22
+            let pads = AppConfig.bubblePadX * 2
+            let gaps: CGFloat = 4 + 4 + (toggle > 0 ? 4 : 0) + (choices > 0 ? 4 : 0)
+            let natural = pads + header + questionHeight + answerHeight + toggle + choices + gaps
+            let limit = model.maxHeight > AppConfig.bubbleMinHeight ? model.maxHeight : screen * 0.4
+            if model.answerExpanded && natural > limit {
+                let chrome = pads + header + toggle + choices + gaps
+                model.summaryHeight = max(36, limit - chrome)
+                model.computedHeight = max(AppConfig.bubbleMinHeight, limit)
+            } else {
+                model.summaryHeight = questionHeight + answerHeight + 4
+                model.computedHeight = max(AppConfig.bubbleMinHeight, natural)
+            }
         }
+    }
+}
+
+/// Three dots that bounce while the assistant reply has not arrived.
+private struct BouncingEllipsis: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color.secondary)
+                        .frame(width: 4, height: 4)
+                        .offset(y: bounce(t: t, index: index))
+                }
+            }
+        }
+        .frame(height: 12, alignment: .center)
+        .alignmentGuide(.firstTextBaseline) { dimensions in
+            dimensions[VerticalAlignment.center]
+        }
+        .accessibilityLabel("…")
+    }
+
+    private func bounce(t: TimeInterval, index: Int) -> CGFloat {
+        let wave = sin(t * 7.2 - Double(index) * 0.7)
+        return CGFloat(-max(0, wave) * 4)
     }
 }
 

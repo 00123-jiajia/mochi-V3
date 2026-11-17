@@ -19,6 +19,10 @@ public struct HookOutcome: Equatable {
     public var detail: String
     /// Abbreviated submit text for the bubble. Empty on permission-only deliveries.
     public var summary: String
+    /// Abbreviated assistant text for the A line. Empty until afterAgentResponse (or a stop summary).
+    public var answer: String
+    /// Abbreviated AskQuestion / plan prompt shown under Q&A when options are present.
+    public var choicePrompt: String
     /// True only for a prompt event that carried submit text. Allow does not set this.
     public var promptSubmitted: Bool
 
@@ -35,6 +39,8 @@ public struct HookOutcome: Equatable {
         permissionStyle: String = "",
         detail: String = "",
         summary: String = "",
+        answer: String = "",
+        choicePrompt: String = "",
         promptSubmitted: Bool = false
     ) {
         self.id = id
@@ -49,6 +55,8 @@ public struct HookOutcome: Equatable {
         self.permissionStyle = permissionStyle
         self.detail = detail
         self.summary = summary
+        self.answer = answer
+        self.choicePrompt = choicePrompt
         self.promptSubmitted = promptSubmitted
     }
 }
@@ -57,7 +65,7 @@ public enum PermissionCopy {
     public static let actionKinds = ["Shell", "MCP", "Permission"]
 
     public static func containsDebug(_ text: String) -> Bool {
-        text.contains("PM手点") || text.contains("请选 Allow 或 Deny")
+        text.contains("PM手点") || text.contains("请选 Allow 或 Deny") || text.contains("请点 Allow 或 Deny")
     }
 
     public static func isPermission(kind: String, status: String, optionIDs: [String]) -> Bool {
@@ -114,8 +122,9 @@ public enum PermissionCopy {
         return trimmed
     }
 
-    /// Question line under the status. Running, waiting, done, and failed cards all use it.
+    /// Q line on the card. Running, waiting, done, and failed cards all use it.
     /// Prefers the stored submit blurb, then a title that is the question itself.
+    /// Permission copy ("Shell needs Allow") lives under Q&A, not here.
     public static func cardBlurb(
         summary: String,
         detail: String,
@@ -124,19 +133,19 @@ public enum PermissionCopy {
         optionIDs: [String],
         title: String = ""
     ) -> String {
-        _ = status
+        _ = optionIDs
         let stored = abbreviate(summary)
         if !stored.isEmpty && !containsDebug(stored) { return stored }
         let named = abbreviate(title)
         if isQuestionTitle(named) { return named }
-        if isPermission(kind: kind, status: "wait", optionIDs: optionIDs) {
-            switch actionKind(detail: detail) {
-            case "Shell": return "Shell needs Allow"
-            case "MCP": return "MCP needs Allow"
-            default: return "Needs Allow or Deny"
-            }
-        }
         return visibleDetail(kind: kind, status: status, detail: detail, optionIDs: optionIDs)
+    }
+
+    /// A line on the card. Two lines after a result; empty means the card should bounce the dots.
+    public static func cardAnswer(_ answer: String) -> String {
+        let stored = abbreviate(answer, limit: answerLimit)
+        if stored.isEmpty || containsDebug(stored) { return "" }
+        return stored
     }
 
     /// Agent names and permission labels are not the user's question.
@@ -149,6 +158,44 @@ public enum PermissionCopy {
             return false
         default:
             return true
+        }
+    }
+
+    /// Stored answer for the expandable A line. The card collapses this to two lines.
+    public static let answerLimit = 500
+
+    /// Running / Waiting / Done / Failed. The card updates this as hooks arrive.
+    public static func statusLine(_ status: String) -> String {
+        switch status {
+        case "running": return "Running"
+        case "wait": return "Waiting"
+        case "done": return "Done"
+        case "fail": return "Failed"
+        default: return ""
+        }
+    }
+
+    /// Question under Q&A when the card still has choices. Permission uses Shell / MCP copy.
+    public static func choiceQuestion(
+        kind: String,
+        detail: String,
+        stored: String,
+        status: String,
+        optionIDs: [String]
+    ) -> String {
+        let stored = abbreviate(stored)
+        if !stored.isEmpty && !containsDebug(stored) { return stored }
+        if isPermission(kind: kind, status: status, optionIDs: optionIDs) {
+            switch actionKind(detail: detail) {
+            case "Shell": return "Shell needs Allow"
+            case "MCP": return "MCP needs Allow"
+            default: return "Needs Allow or Deny"
+            }
+        }
+        switch kind.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "plan": return "Approve this plan?"
+        case "mode": return "Switch mode?"
+        default: return ""
         }
     }
 
@@ -184,19 +231,22 @@ public enum HookEvents {
         let kind = waits ? "permission" : choice.kind
         // Permission deliveries keep summary empty here; merge restores the prior chat blurb.
         let summary = waits ? "" : chatSummary(for: event, payload: payload)
+        let waiting = mapped == "wait"
         return HookOutcome(
             id: sessionID(in: payload, source: source, event: event),
             source: source,
             title: waits ? PermissionCopy.actionKind(detail: detail) : SlotFace.displayName(for: source),
             status: mapped,
-            kind: mapped == "wait" && waits ? kind : (mapped == "wait" ? "" : ""),
+            kind: waiting ? kind : "",
             requestID: waits ? requestID(in: payload) : "",
-            questionID: waits ? choice.questionID : "",
-            options: waits ? options : [],
+            questionID: waiting ? choice.questionID : "",
+            options: waiting ? options : [],
             waitsForPermission: waits,
             permissionStyle: waits ? (source == "codex" ? "codex" : "cursor") : "",
             detail: detail,
             summary: summary,
+            answer: chatAnswer(for: event, payload: payload),
+            choicePrompt: waiting && !waits ? choice.prompt : "",
             promptSubmitted: Self.isPromptSubmit(event) && !summary.isEmpty
         )
     }
@@ -227,7 +277,7 @@ public enum HookEvents {
 
     /// Merges one delivery into the task dictionary. The stored record is id, agent, status, and time,
     /// plus the permission fields the bubble needs to answer. Full prompt and command text stay out;
-    /// a short summary may remain for the card.
+    /// a short question summary and a short answer may remain for the card.
     public static func merge(_ outcome: HookOutcome, into tasks: inout [String: Any], now: Double) {
         let (oldKey, previous) = find(tasks, id: outcome.id)
         var status = outcome.status
@@ -260,6 +310,18 @@ public enum HookEvents {
         if summary.isEmpty {
             summary = string(previous["summary"])
         }
+        var answer = outcome.answer
+        if outcome.promptSubmitted {
+            answer = ""
+        } else if answer.isEmpty {
+            answer = string(previous["answer"])
+        }
+        var choicePrompt = outcome.choicePrompt
+        if outcome.waitsForPermission || status != "wait" {
+            choicePrompt = ""
+        } else if choicePrompt.isEmpty {
+            choicePrompt = string(previous["choice_prompt"])
+        }
         if oldKey != outcome.id { tasks.removeValue(forKey: oldKey) }
         var record: [String: Any] = [
             "id": outcome.id,
@@ -274,6 +336,9 @@ public enum HookEvents {
         if !summary.isEmpty {
             record["summary"] = summary
         }
+        if !answer.isEmpty {
+            record["answer"] = answer
+        }
         if submitGen > 0 {
             record["submit_gen"] = submitGen
         }
@@ -282,6 +347,7 @@ public enum HookEvents {
             record["options"] = options
             record["request_id"] = requestID
             if !questionID.isEmpty { record["question_id"] = questionID }
+            if !choicePrompt.isEmpty { record["choice_prompt"] = choicePrompt }
         }
         tasks[outcome.id] = record
     }
@@ -347,6 +413,7 @@ public enum HookEvents {
             record.removeValue(forKey: "options")
             record.removeValue(forKey: "detail")
             record.removeValue(forKey: "question_id")
+            record.removeValue(forKey: "choice_prompt")
             record.removeValue(forKey: "prompt")
             record.removeValue(forKey: "command")
             tasks[key] = record
@@ -421,6 +488,7 @@ public enum HookEvents {
             if let native = grokNative(event, payload: payload) {
                 return native
             }
+            if event.lowercased() == "stop" { return "heartbeat" }
             return cursorFamilyStatus(event, payload: payload, source: "cursor")
         default: return cursorFamilyStatus(event, payload: payload, source: source)
         }
@@ -533,8 +601,10 @@ public enum HookEvents {
         }
         if isChoice(payload: payload), !isFinishedTool(event) { return "wait" }
         switch name {
-        case "afteragentthought", "afteragentresponse", "afterfileedit", "stop":
+        case "afteragentthought", "afteragentresponse", "afterfileedit":
             return "heartbeat"
+        case "stop":
+            return failed(payload) ? "fail" : "done"
         case "beforesubmitprompt", "sessionstart", "subagentstart",
              "userpromptsubmit", "pretooluse", "posttooluse", "posttoolusefailure",
              "notification", "beforeshellexecution", "aftershellexecution",
@@ -549,7 +619,7 @@ public enum HookEvents {
 
     /// Short submit blurb for chat events only. Shell and MCP keep no command text here.
     /// Cursor may re-fire beforeSubmitPrompt with an empty prompt on resume; that yields "".
-    /// A subagent card uses its `task` text. The stop hook's output `summary` is agent text and is ignored.
+    /// A subagent card uses its `task` text. Agent output is stored separately as `answer`.
     private static func chatSummary(for event: String, payload: [String: Any]) -> String {
         if isPromptSubmit(event) {
             let prompt = promptText(in: payload)
@@ -564,6 +634,26 @@ public enum HookEvents {
             return PermissionCopy.abbreviate(task)
         }
         return ""
+    }
+
+    /// Short assistant blurb for the A line. Thinking text and shell output stay out.
+    /// Cursor sends the reply on `afterAgentResponse`. Codex sends it on `Stop` as `last_assistant_message`.
+    private static func chatAnswer(for event: String, payload: [String: Any]) -> String {
+        switch normalizedEvent(event) {
+        case "afteragentresponse":
+            return PermissionCopy.cardAnswer(stringValue(payload["text"]) ?? "")
+        case "stop":
+            return PermissionCopy.cardAnswer(stringValue(payload["last_assistant_message"]) ?? "")
+        case "subagentstop":
+            let output = string(payload["summary"])
+            if !output.isEmpty { return PermissionCopy.cardAnswer(output) }
+            if let message = stringValue(payload["last_assistant_message"]), !message.isEmpty {
+                return PermissionCopy.cardAnswer(message)
+            }
+            return PermissionCopy.cardAnswer(stringValue(payload["text"]) ?? "")
+        default:
+            return ""
+        }
     }
 
     /// Reads the user submit text from common Cursor / Codex / Claude shapes without keeping the full payload.
@@ -669,21 +759,29 @@ public enum HookEvents {
         return ""
     }
 
-    private static func choiceOptions(payload: [String: Any], event: String) -> (kind: String, questionID: String, options: [[String: String]]) {
-        guard !isFinishedTool(event) else { return ("", "", []) }
+    private static func choiceOptions(payload: [String: Any], event: String) -> (kind: String, questionID: String, options: [[String: String]], prompt: String) {
+        guard !isFinishedTool(event) else { return ("", "", [], "") }
         switch toolName(payload) {
         case "CreatePlan":
-            return ("plan", "", [["id": "approve", "label": "Approve"], ["id": "keep", "label": "Keep planning"]])
+            return ("plan", "", [["id": "approve", "label": "Approve"], ["id": "keep", "label": "Keep planning"]], "")
         case "SwitchMode":
-            return ("mode", "", [["id": "allow", "label": "Allow switch"], ["id": "stay", "label": "Stay"]])
+            return ("mode", "", [["id": "allow", "label": "Allow switch"], ["id": "stay", "label": "Stay"]], "")
         case "AskQuestion":
             let input = dictionary(payload, keys: ["tool_input", "input", "arguments", "args"])
             let questions = input["questions"] as? [Any] ?? []
             let first = questions.first as? [String: Any] ?? [:]
             let questionID = string(first["id"])
-            return ("choice", questionID, optionList(first["options"] ?? input["options"]))
+            var prompt = string(first["prompt"])
+            if prompt.isEmpty { prompt = string(first["text"]) }
+            if prompt.isEmpty { prompt = string(first["question"]) }
+            return (
+                "choice",
+                questionID,
+                optionList(first["options"] ?? input["options"]),
+                PermissionCopy.abbreviate(prompt)
+            )
         default:
-            return ("", "", [])
+            return ("", "", [], "")
         }
     }
 
@@ -764,13 +862,16 @@ public enum HookEvents {
         )
     }
 
-    /// Drops full prompt and command text. Keeps a short summary for the bubble.
+    /// Drops full prompt and command text. Keeps a short question and answer for the bubble.
     private static func scrub(_ tasks: inout [String: Any]) {
         for key in Array(tasks.keys) {
             guard var record = tasks[key] as? [String: Any] else { continue }
             let prompt = string(record["prompt"])
             let command = string(record["command"])
-            for banned in ["prompt", "command", "tool_input", "toolInput", "message", "initialPrompt", "initial_prompt"] {
+            for banned in [
+                "prompt", "command", "tool_input", "toolInput", "message", "initialPrompt", "initial_prompt",
+                "last_assistant_message", "text", "output"
+            ] {
                 record.removeValue(forKey: banned)
             }
             let rawDetail = string(record["detail"])
@@ -795,6 +896,22 @@ public enum HookEvents {
             } else if !prompt.isEmpty, summary == prompt, prompt.count > 40 {
                 summary = ""
             }
+            var answer = string(record["answer"])
+            if !answer.isEmpty {
+                answer = PermissionCopy.cardAnswer(answer)
+            }
+            if PermissionCopy.containsDebug(answer) {
+                answer = ""
+            } else if !command.isEmpty, answer == command {
+                answer = ""
+            }
+            var choicePrompt = string(record["choice_prompt"])
+            if !choicePrompt.isEmpty {
+                choicePrompt = PermissionCopy.abbreviate(choicePrompt)
+            }
+            if PermissionCopy.containsDebug(choicePrompt) {
+                choicePrompt = ""
+            }
             if isPermissionRecord(record) {
                 title = PermissionCopy.actionKind(detail: rawDetail, title: title)
                 if !PermissionCopy.actionKinds.contains(detail) {
@@ -813,6 +930,16 @@ public enum HookEvents {
                 record.removeValue(forKey: "summary")
             } else {
                 record["summary"] = summary
+            }
+            if answer.isEmpty {
+                record.removeValue(forKey: "answer")
+            } else {
+                record["answer"] = answer
+            }
+            if choicePrompt.isEmpty || string(record["status"]) != "wait" {
+                record.removeValue(forKey: "choice_prompt")
+            } else {
+                record["choice_prompt"] = choicePrompt
             }
             tasks[key] = record
         }

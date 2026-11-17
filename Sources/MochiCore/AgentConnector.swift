@@ -23,7 +23,8 @@ public protocol AgentConnector {
 public enum AgentConnectorRegistry {
     public static let primary: [AgentConnector] = [
         CursorConnector(),
-        CodexConnector()
+        CodexConnector(),
+        GrokConnector()
     ]
 
     public static func connector(for id: String) -> AgentConnector? {
@@ -111,10 +112,79 @@ public struct CodexConnector: AgentConnector {
     }
 
     public func retarget(binaryURL: URL) -> Bool {
-        HookInstaller.retargetNested(
+        let pointed = HookInstaller.retargetNested(
             fileURL: hooksURL,
             binaryURL: binaryURL,
             source: "codex"
         )
+        let trusted = HookInstaller.trustCodex(
+            configURL: configURL,
+            hooksURL: hooksURL,
+            binaryURL: binaryURL
+        )
+        return pointed && trusted
+    }
+}
+
+/// Grok Bot. The hook file is for the grok command-line tool. Grok Bot.app is followed
+/// from the session store it writes on this Mac.
+public struct GrokConnector: AgentConnector {
+    public let id = "grok-bot"
+    public let displayName = "Grok Bot"
+    public let needsPrivacyAck = false
+
+    public init() {}
+
+    private var directory: URL {
+        PassiveHooks.grokDirectory(home: AppConfig.homeDirectory)
+    }
+
+    private var fileURL: URL {
+        directory.appendingPathComponent("mochi-island.json")
+    }
+
+    public func status(binaryURL: URL) -> HookInstallResult {
+        grokResult(PassiveHooks.grokStatus(directory: directory, binaryURL: binaryURL), binaryURL: binaryURL)
+    }
+
+    public func connect(binaryURL: URL, privacyAccepted: Bool) -> HookInstallResult {
+        grokResult(
+            PassiveHooks.installGrok(directory: directory, binaryURL: binaryURL, privacyAccepted: privacyAccepted),
+            binaryURL: binaryURL
+        )
+    }
+
+    public func disconnect(binaryURL: URL) -> HookInstallResult {
+        let result = PassiveHooks.remove(fileURL: fileURL, binaryURL: binaryURL)
+        GrokBotSession.remove(tasksURL: AppConfig.cursorDirectory.appendingPathComponent("mochi-island-tasks.json"))
+        return result
+    }
+
+    public func retarget(binaryURL: URL) -> Bool {
+        HookInstaller.retargetNested(fileURL: fileURL, binaryURL: binaryURL, source: "grok")
+    }
+
+    /// Connected when the hook file is installed and either the grok tool or Grok Bot.app is here.
+    private func grokResult(_ result: HookInstallResult, binaryURL: URL) -> HookInstallResult {
+        guard result.connected else { return result }
+        if GrokCLI.isInstalled() || GrokBotSession.appIsInstalled() {
+            return result
+        }
+        return HookInstallResult(
+            connected: false,
+            hook: binaryURL.path,
+            error: "Grok Bot is not installed"
+        )
+    }
+}
+
+enum GrokCLI {
+    static func isInstalled(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        let path = environment["PATH"] ?? ""
+        for directory in path.split(separator: ":") where !directory.isEmpty {
+            let executable = URL(fileURLWithPath: String(directory)).appendingPathComponent("grok")
+            if FileManager.default.isExecutableFile(atPath: executable.path) { return true }
+        }
+        return false
     }
 }

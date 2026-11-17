@@ -163,6 +163,7 @@ public struct BubblePlacement: Equatable {
 public enum BubblePlacer {
     /// Puts the bubble beside the capsule, not the icon.
     /// The kitten's screen half picks the side. The beak aims at `anchor` and stops `beakGap` short of the capsule.
+    /// The top edge stays put. A taller card hangs downward, with room for the beak to aim at the icon.
     /// Beak y stays inside `[radius+8, height-radius-8]` after the bubble is clamped.
     public static func place(anchor: CGRect, capsule: CGRect, size: CGSize, screen: CGRect) -> BubblePlacement {
         let width = max(1, size.width)
@@ -172,7 +173,8 @@ public enum BubblePlacer {
         var x = pointsRight
             ? capsule.minX - AppConfig.beakGap - width
             : capsule.maxX + AppConfig.beakGap
-        var y = anchor.midY - height / 2
+        let beakRoom = AppConfig.bubbleRadius + 8
+        var y = anchor.midY + beakRoom - height
         y = min(max(y, screen.minY), max(screen.minY, screen.maxY - height))
         x = min(max(x, screen.minX), max(screen.minX, screen.maxX - width))
         var frame = CGRect(x: x, y: y, width: width, height: height)
@@ -339,7 +341,8 @@ public enum AgentIconList {
     ) -> Bool {
         if isExpired(item, now: now) { return false }
         if holding.contains(item.id) { return true }
-        if item.hasPendingOptions { return true }
+        // Leftover Allow/Deny on a running row is not an open question.
+        if item.hasPendingOptions, item.status != "running" { return true }
         switch item.status {
         case "running":
             return isWorking(item, now: now)

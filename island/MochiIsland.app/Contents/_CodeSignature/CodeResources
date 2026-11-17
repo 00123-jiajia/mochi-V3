@@ -20,21 +20,45 @@
 		<data>
 		cRVZu5nMqM/ewMV1JEu2BbWMoKc=
 		</data>
+		<key>Resources/Web/pets/agent-claude.png</key>
+		<data>
+		98+nUsfiRFy2bfXj2Nnv3WGwRoo=
+		</data>
 		<key>Resources/Web/pets/agent-claude.svg</key>
 		<data>
 		O/J68ezztGr9xowS44LfeCiND38=
+		</data>
+		<key>Resources/Web/pets/agent-codex.png</key>
+		<data>
+		sb6cJbGixuitbpRu+uqpNUcIkaM=
 		</data>
 		<key>Resources/Web/pets/agent-codex.svg</key>
 		<data>
 		4RuXO/uaS8Sm7Sc/JTJmmRaWRMM=
 		</data>
+		<key>Resources/Web/pets/agent-cursor.png</key>
+		<data>
+		jspyh+sdrKbsUdKReDtH4luhHUM=
+		</data>
 		<key>Resources/Web/pets/agent-cursor.svg</key>
 		<data>
 		azGbDavbZAARXXcKIH/NbcwWbx4=
 		</data>
+		<key>Resources/Web/pets/agent-gemini.png</key>
+		<data>
+		54IEG9fYI27BnfMcPSm4FF/mWTE=
+		</data>
+		<key>Resources/Web/pets/agent-gpt.png</key>
+		<data>
+		nvfaHVjK9om3MnTpTJwT5CvT6V4=
+		</data>
 		<key>Resources/Web/pets/agent-gpt.svg</key>
 		<data>
 		iayWpeuQHzhtCydzfv3z1c7x6Ww=
+		</data>
+		<key>Resources/Web/pets/agent-grok.png</key>
+		<data>
+		or0TVJarnM+1CTmozlub3grpEV0=
 		</data>
 		<key>Resources/Web/pets/agent-grok.svg</key>
 		<data>
@@ -139,10 +163,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			MYMsZDl50kMOrqdzjTaJucOvYdU=
+			TML4vUvOD84dr4RUWwCVUZYqEwE=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"31832c643979d2430eaea7738d3689b9c3af61d5" or cdhash H"22bd34829f4325e656e59b9582308071f365eebc"</string>
+			<string>cdhash H"4cc2f8bd4bce0fce1daf84545b009551962a1301" or cdhash H"722c94829a50efa9b7ee585819af4a757f8ccc51"</string>
 		</dict>
 		<key>Resources/AppIcon.icns</key>
 		<dict>
@@ -172,11 +196,25 @@
 			e1zusS4izUb1ZzJ7YJF7lMnR7JViZLOljZMXUzXUDG8=
 			</data>
 		</dict>
+		<key>Resources/Web/pets/agent-claude.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			84ieCsmgAQx9E7umeY/IVeeZerpnK1+7Wf4SVjh2cbE=
+			</data>
+		</dict>
 		<key>Resources/Web/pets/agent-claude.svg</key>
 		<dict>
 			<key>hash2</key>
 			<data>
 			Uvhx1Qj7LSHGCEbBDQYs9ZCQNmAp84Mh8pxgIdjKBck=
+			</data>
+		</dict>
+		<key>Resources/Web/pets/agent-codex.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			aftDhOFhvoog3LlKmsNK6k+/rrZ1FBEKceewcy7MsPw=
 			</data>
 		</dict>
 		<key>Resources/Web/pets/agent-codex.svg</key>
@@ -186,6 +224,13 @@
 			zCoJtwzRWWIxIYo+mBwqItgFxtmKk38d0/74YrUC0BI=
 			</data>
 		</dict>
+		<key>Resources/Web/pets/agent-cursor.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			FPpNXQG8LGNqIcNdWy94vTqYE16I9REUZeAqzdfHFyE=
+			</data>
+		</dict>
 		<key>Resources/Web/pets/agent-cursor.svg</key>
 		<dict>
 			<key>hash2</key>
@@ -193,11 +238,32 @@
 			abTueihNl4qYPenaQjdFBSk0fYnp6CpkGyHm+cbR+yk=
 			</data>
 		</dict>
+		<key>Resources/Web/pets/agent-gemini.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			prbb/b6QBhktPaugFCrzWEf4M7yU6ZJBhqGauSII2Ts=
+			</data>
+		</dict>
+		<key>Resources/Web/pets/agent-gpt.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			NFOUepzicJt+xRwFWcfrl25KxTsjK2B9HYGw0dEEi2E=
+			</data>
+		</dict>
 		<key>Resources/Web/pets/agent-gpt.svg</key>
 		<dict>
 			<key>hash2</key>
 			<data>
 			50n0TaRYvMdoBrqfSJ2fbFqNIrjZ1HA9oYVA1KPETY8=
+			</data>
+		</dict>
+		<key>Resources/Web/pets/agent-grok.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			fGf7J0ue8DvmXj5rmskc4yeW9TbKZyaGyXhVAsSxPc4=
 			</data>
 		</dict>
 		<key>Resources/Web/pets/agent-grok.svg</key>

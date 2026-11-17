@@ -99,6 +99,9 @@ public enum ToneSynth {
         }
     }
 
+    public static let cueRepeats = 3
+    public static let cueGap = 0.08
+
     public static func render(_ name: String, sampleRate: Double = ToneSynth.sampleRate) -> [Float] {
         let notes = recipe(name)
         let end = notes.map { $0.start + $0.duration + 0.02 }.max() ?? 0.12
@@ -106,6 +109,21 @@ public enum ToneSynth {
         var buffer = [Float](repeating: 0, count: count)
         for note in notes {
             mix(note, into: &buffer, sampleRate: sampleRate)
+        }
+        return buffer
+    }
+
+    /// One status cue played three times, with a short silence between each copy.
+    public static func renderCue(_ name: String, sampleRate: Double = ToneSynth.sampleRate) -> [Float] {
+        let once = render(name, sampleRate: sampleRate)
+        let silence = max(0, Int(cueGap * sampleRate))
+        var buffer: [Float] = []
+        buffer.reserveCapacity(cueRepeats * once.count + (cueRepeats - 1) * silence)
+        for index in 0..<cueRepeats {
+            if index > 0 {
+                buffer.append(contentsOf: repeatElement(0, count: silence))
+            }
+            buffer.append(contentsOf: once)
         }
         return buffer
     }

@@ -376,6 +376,7 @@ final class IslandController: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     private func pollTasks() {
+        session.refreshGrokBot(now: Date().timeIntervalSince1970)
         deliverTasksIfChanged()
         session.refreshTranscriptHintsIfDue { [weak self] changed in
             if changed { self?.deliverTasks() }

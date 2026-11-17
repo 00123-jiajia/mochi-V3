@@ -60,6 +60,7 @@ final class AppSession {
     /// One read of the tasks file for the capsule and the card. Transcript hints stay cached.
     func liveSnapshot() -> (state: [String: Any], tasks: [[String: Any]]) {
         let now = Date().timeIntervalSince1970
+        refreshGrokBot(now: now)
         let before = pet
         PetEngine.tick(&pet, now: now)
         let tasks = visibleTasks(now: now)
@@ -195,7 +196,8 @@ final class AppSession {
         let claude = HookInstaller.claudeStatus(settingsURL: claudeSettingsURL, binaryURL: binary)
         let copilot = PassiveHooks.copilotStatus(directory: copilotHooksDirectory, binaryURL: binary)
         let opencode = PassiveHooks.openCodeStatus(pluginURL: openCodePluginURL, binaryURL: binary)
-        let grok = PassiveHooks.grokStatus(directory: grokHooksDirectory, binaryURL: binary)
+        let grok = AgentConnectorRegistry.connector(for: "grok-bot")?.status(binaryURL: binary)
+            ?? PassiveHooks.grokStatus(directory: grokHooksDirectory, binaryURL: binary)
         let gemini = HookInstaller.geminiStatus(settingsURL: geminiSettingsURL, binaryURL: binary)
         var payload = cursor.dictionary
         payload["agents"] = [
@@ -345,6 +347,17 @@ final class AppSession {
         guard next != slots else { return }
         slots = next
         slotDisk.save(slots)
+    }
+
+    /// Grok Bot.app does not run the hook file. Follow its local session while Connect is on.
+    func refreshGrokBot(now: Double) {
+        let binary = hookBinary()
+        guard AgentConnectorRegistry.connector(for: "grok-bot")?.status(binaryURL: binary).connected == true else { return }
+        GrokBotSession.sync(
+            directory: GrokBotSession.persistenceDirectory(home: AppConfig.homeDirectory),
+            tasksURL: tasksURL,
+            now: now
+        )
     }
 
     private func visibleTasks(now: Double) -> [CursorTask] {

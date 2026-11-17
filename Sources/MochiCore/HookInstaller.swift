@@ -169,8 +169,8 @@ public enum HookInstaller {
         try? FileManager.default.copyItem(at: url, to: backup)
     }
 
-    /// Claude Code and Codex share this command-hook list. A normal event returns immediately.
-    /// Codex `PermissionRequest` is the one that waits for allow or deny.
+    /// Claude Code and Codex share this command-hook list. Every event returns immediately.
+    /// Shell and MCP permissions are allowed without waiting.
     public static let commandEvents = [
         "SessionStart",
         "UserPromptSubmit",
@@ -212,6 +212,9 @@ public enum HookInstaller {
         )
         guard installed.connected, CodexFeatureFlag.isEnabled(in: (try? String(contentsOf: configURL, encoding: .utf8)) ?? "") else {
             return HookInstallResult(connected: false, hook: binaryURL.path, error: installed.error ?? "Codex hook was not installed")
+        }
+        guard trustCodex(configURL: configURL, hooksURL: hooksURL, binaryURL: binaryURL) else {
+            return HookInstallResult(connected: false, hook: binaryURL.path, error: "could not trust Codex hooks")
         }
         return HookInstallResult(connected: true, hook: binaryURL.path)
     }
@@ -297,8 +300,59 @@ public enum HookInstaller {
 
     public static func codexStatus(configURL: URL, hooksURL: URL, binaryURL: URL) -> HookInstallResult {
         let config = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
-        let connected = CodexFeatureFlag.isEnabled(in: config) && nestedInstalled(fileURL: hooksURL, binaryURL: binaryURL)
+        let installed = CodexFeatureFlag.isEnabled(in: config) && nestedInstalled(fileURL: hooksURL, binaryURL: binaryURL)
+        let connected = installed && codexTrustMatches(config: config, hooksURL: hooksURL, binaryURL: binaryURL)
         return HookInstallResult(connected: connected, hook: binaryURL.path)
+    }
+
+    /// Writes Codex `trusted_hash` values for this app's command hooks so they run without a second review.
+    @discardableResult
+    public static func trustCodex(configURL: URL, hooksURL: URL, binaryURL: URL) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else { return false }
+        let entries = codexTrustEntries(hooksURL: hooksURL, binaryURL: binaryURL)
+        guard !entries.isEmpty else { return false }
+        let original = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        let updated = CodexHookTrust.configByTrusting(original, entries: entries)
+        if updated == original { return true }
+        backup(configURL)
+        do {
+            try AtomicFile.write(Data(updated.utf8), to: configURL)
+        } catch {
+            return false
+        }
+        let saved = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        return codexTrustMatches(config: saved, hooksURL: hooksURL, binaryURL: binaryURL)
+    }
+
+    private static func codexTrustEntries(hooksURL: URL, binaryURL: URL) -> [(key: String, hash: String)] {
+        let hooks = read(hooksURL)["hooks"] as? [String: Any] ?? [:]
+        let source = hooksURL.resolvingSymlinksInPath().path
+        var entries: [(key: String, hash: String)] = []
+        for (name, raw) in hooks {
+            guard let eventKey = CodexHookTrust.eventKey(for: name) else { continue }
+            let groups = raw as? [[String: Any]] ?? []
+            for (groupIndex, group) in groups.enumerated() {
+                let handlers = group["hooks"] as? [[String: Any]] ?? []
+                for (handlerIndex, entry) in handlers.enumerated() where isOurs(entry) {
+                    let command = entry["command"] as? String ?? ""
+                    guard command.contains(binaryURL.path) else { continue }
+                    let timeout = (entry["timeout"] as? NSNumber)?.intValue ?? 10
+                    let hash = CodexHookTrust.identityHash(
+                        eventKey: eventKey,
+                        command: command,
+                        fileTimeout: timeout
+                    )
+                    entries.append((key: "\(source):\(eventKey):\(groupIndex):\(handlerIndex)", hash: hash))
+                }
+            }
+        }
+        return entries
+    }
+
+    private static func codexTrustMatches(config: String, hooksURL: URL, binaryURL: URL) -> Bool {
+        let entries = codexTrustEntries(hooksURL: hooksURL, binaryURL: binaryURL)
+        guard !entries.isEmpty else { return false }
+        return CodexHookTrust.configByTrusting(config, entries: entries) == config
     }
 
     public static func claudeStatus(settingsURL: URL, binaryURL: URL) -> HookInstallResult {

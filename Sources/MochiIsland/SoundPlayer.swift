@@ -34,16 +34,19 @@ final class SoundPlayer {
         playPreview(timbre)
     }
 
-    /// One task cue per second. A muted Mac stays quiet.
+    /// One task cue per second, played three times. A muted Mac stays quiet.
     func playCue(_ name: String) {
         guard gate.shouldPlay(now: Date().timeIntervalSince1970) else { return }
-        playPreview(name)
+        playSamples(ToneSynth.renderCue(Self.resolved(name)))
     }
 
     func playPreview(_ timbre: String) {
+        playSamples(ToneSynth.render(Self.resolved(timbre)))
+    }
+
+    private func playSamples(_ samples: [Float]) {
         guard !Self.outputMuted() else { return }
-        let name = Self.resolved(timbre)
-        guard format != nil, let buffer = buffer(ToneSynth.render(name)) else { return }
+        guard format != nil, let buffer = buffer(samples) else { return }
         do {
             if !started {
                 try engine.start()

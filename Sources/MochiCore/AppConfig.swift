@@ -38,10 +38,12 @@ public enum AppConfig {
     public static let bubbleRadius: CGFloat = 12
     public static let beakWidth: CGFloat = 10
     public static let beakHeight: CGFloat = 16
-    public static let beakGap: CGFloat = 6
+    public static let beakGap: CGFloat = 10
     public static let beakTipRadius: CGFloat = 2.8
     public static let bubbleMinWidth: CGFloat = 160
-    public static let bubbleMaxWidth: CGFloat = 220
+    public static let bubbleMaxWidth: CGFloat = 280
+    /// Card content uses the same inset on every edge. The beak sits outside the body.
+    public static let bubbleBeakInset: CGFloat = 0
     public static let bubblePadX: CGFloat = 12
     public static let bubblePadY: CGFloat = 8
     public static let bubbleMinHeight: CGFloat = 44

@@ -393,15 +393,24 @@ private struct AgentRingLayout {
 }
 
 enum AgentIcon {
+    /// Confirmed official marks in `web/pets/agent-*.png`. The installed app icon is next,
+    /// then the simplified SVG, for products that do not have a PNG yet.
     static func image(source: String) -> NSImage? {
+        if AgentLaunch.normalize(source) != "mochi", let official = bundled(source, ext: "png") {
+            return official
+        }
         let plan = AgentLaunch.plan(source: source)
         if let path = plan.appPath {
             let icon = NSWorkspace.shared.icon(forFile: path)
             icon.size = NSSize(width: 32, height: 32)
             return icon
         }
+        return bundled(source, ext: "svg")
+    }
+
+    private static func bundled(_ source: String, ext: String) -> NSImage? {
         let name = SlotFace.agentMark(for: source)
-        let url = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "Web/pets")
+        let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "Web/pets")
         guard let url, let image = NSImage(contentsOf: url) else { return nil }
         image.size = NSSize(width: 28, height: 28)
         return image

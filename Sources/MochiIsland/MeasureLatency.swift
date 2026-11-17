@@ -472,7 +472,7 @@ final class LatencyHarness: NSObject, NSApplicationDelegate, WKScriptMessageHand
                     && nativeWhole("menuCount") == 0
                     && nativeWhole("bubbleRadius") == 12
                     && nativeWhole("beakW") == 10
-                    && nativeWhole("beakGap") == 6
+                    && nativeWhole("beakGap") == 10
                     && (native["material"] as? String) == KittenShell.materialAPI
                     && (native["addSymbol"] as? String) == KittenShell.addSymbol
                     && (native["gearSymbol"] as? String) == KittenShell.settingsSymbol

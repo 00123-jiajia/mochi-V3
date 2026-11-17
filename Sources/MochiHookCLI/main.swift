@@ -3,8 +3,6 @@ import Foundation
 import MochiCore
 
 let stateURL = AppConfig.cursorDirectory.appendingPathComponent("mochi-island-tasks.json")
-let replyURL = AppConfig.cursorDirectory.appendingPathComponent("mochi-island-reply.json")
-let permissionTimeout: TimeInterval = 280
 
 func emit(_ object: Any) {
     let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
@@ -47,65 +45,6 @@ func withLock(_ body: () -> Void) {
     }
 }
 
-func readReply() -> [String: Any] {
-    guard let data = try? Data(contentsOf: replyURL),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        return [:]
-    }
-    return json
-}
-
-func clearStaleReply(itemID: String, requestID: String) {
-    let data = readReply()
-    let action = (data["action"] as? String ?? "").lowercased()
-    guard action == "allow" || action == "deny" else { return }
-    let rid = data["request_id"] as? String ?? ""
-    let tid = data["id"] as? String ?? ""
-    let matchesCurrent: Bool
-    if !requestID.isEmpty {
-        matchesCurrent = rid == requestID
-    } else {
-        matchesCurrent = tid == itemID
-    }
-    guard !matchesCurrent else { return }
-    // Drop a leftover Allow/Deny so the next Shell/MCP wait needs a fresh click.
-    try? AtomicFile.writeJSON(
-        ["id": "", "request_id": "", "action": "", "kind": "permission"] as [String: Any],
-        to: replyURL
-    )
-}
-
-func matchedPermission(itemID: String, requestID: String) -> String? {
-    let data = readReply()
-    let action = (data["action"] as? String ?? "").lowercased()
-    guard action == "allow" || action == "deny" else { return nil }
-    let rid = data["request_id"] as? String ?? ""
-    let tid = data["id"] as? String ?? ""
-    if !requestID.isEmpty, rid == requestID { return action }
-    if requestID.isEmpty, tid == itemID { return action }
-    return nil
-}
-
-func waitPermission(itemID: String, requestID: String) -> String {
-    clearStaleReply(itemID: itemID, requestID: requestID)
-    let deadline = Date().addingTimeInterval(permissionTimeout)
-    let wake = DispatchSemaphore(value: 0)
-    let watch = TaskFileWatch(fileURL: replyURL)
-    watch.start { wake.signal() }
-    defer { watch.stop() }
-    while Date() < deadline {
-        if let action = matchedPermission(itemID: itemID, requestID: requestID) {
-            return action
-        }
-        let remaining = deadline.timeIntervalSinceNow
-        if remaining <= 0 { break }
-        // The reply watch wakes this immediately. The short wait only covers a missed note.
-        _ = wake.wait(timeout: .now() + min(0.2, remaining))
-    }
-    // No user click: refuse the tool. Exit 0 still keeps Cursor unblocked.
-    return "deny"
-}
-
 func run() {
     let payload = readStdin()
     let outcome = HookEvents.interpret(
@@ -117,19 +56,17 @@ func run() {
     if let outcome {
         withLock {
             HookEvents.commit(outcome, tasksURL: stateURL)
-        }
-        if outcome.waitsForPermission {
-            let action = waitPermission(itemID: outcome.id, requestID: outcome.requestID)
-            // Mark the wait answered so the card and status update even if the UI
-            // already wrote the reply file, or only the hook saw the click.
-            withLock {
+            // Shell and MCP continue at once. The card does not stay on Allow / Deny.
+            if outcome.waitsForPermission {
                 HookEvents.acknowledge(
                     id: outcome.id,
                     requestID: outcome.requestID,
                     tasksURL: stateURL
                 )
             }
-            emit(HookEvents.permissionStdout(style: outcome.permissionStyle, action: action))
+        }
+        if outcome.waitsForPermission {
+            emit(HookEvents.permissionStdout(style: outcome.permissionStyle, action: "allow"))
             return
         }
     }

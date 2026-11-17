@@ -269,7 +269,7 @@ final class SettingsModel: ObservableObject {
     @Published var claudeButton = "Connect Claude"
     @Published var copilotButton = "Connect Copilot"
     @Published var opencodeButton = "Connect OpenCode"
-    @Published var grokButton = "Connect Grok"
+    @Published var grokButton = "Connect Grok Bot"
     @Published var geminiButton = "Connect Gemini"
     @Published var petScale = 1.0
     @Published var look = "a"
@@ -331,7 +331,7 @@ final class SettingsModel: ObservableObject {
         claudeButton = claudeConnected ? "Disconnect" : "Connect Claude"
         copilotButton = copilotConnected ? "Disconnect" : "Connect Copilot"
         opencodeButton = opencodeConnected ? "Disconnect" : "Connect OpenCode"
-        grokButton = grokConnected ? "Disconnect" : "Connect Grok"
+        grokButton = grokConnected ? "Disconnect" : "Connect Grok Bot"
         geminiButton = geminiConnected ? "Disconnect" : "Connect Gemini"
     }
 
@@ -737,7 +737,7 @@ struct SettingsRoot: View {
             }
             Section("Codex") {
                 LabeledContent("Status", value: model.codexStatus)
-                Text("Connect one-click enables Codex hooks and points them at this app. A submitted chat adds the Codex icon. Prompts stay in Codex.")
+                Text("Connect enables Codex hooks, trusts this app's command, and points it at this app. A submitted chat adds the Codex icon. Prompts stay in Codex.")
                     .foregroundStyle(.secondary)
                 Button(model.codexButton) { model.connect("codex") }
             }
@@ -759,11 +759,11 @@ struct SettingsRoot: View {
                     .foregroundStyle(.secondary)
                 Button(model.opencodeButton) { model.connect("opencode") }
             }
-            Section("Grok") {
+            Section("Grok Bot") {
                 LabeledContent("Status", value: model.grokStatus)
-                Text("Connect writes ~/.grok/hooks/mochi-island.json for the grok CLI.")
+                Text("Connect links Grok Bot on this Mac. A chat adds the Grok Bot icon. The card keeps a short question and answer.")
                     .foregroundStyle(.secondary)
-                Button(model.grokButton) { model.connect("grok") }
+                Button(model.grokButton) { model.connect("grok-bot") }
             }
             Section("Gemini") {
                 LabeledContent("Status", value: model.geminiStatus)

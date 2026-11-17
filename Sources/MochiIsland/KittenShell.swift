@@ -316,6 +316,8 @@ final class KittenShell: NSObject {
     private var springTail: CGFloat = 0
     private var selectionTicket = 0
     private var pinnedIDs: Set<String> = []
+    /// Running conversations the user has opened. Closing the card does not drop them.
+    private var viewedRunning: Set<String> = []
     /// Done and fail ids the user has already opened and closed.
     /// A later refresh must not put that icon back by treating the task as unread.
     private var readFinished: Set<String> = []
@@ -488,6 +490,8 @@ final class KittenShell: NSObject {
                 if !status.isEmpty { remembered[id] = status }
             }
         }
+        viewedRunning = viewedRunning.filter { string(taskByID[$0]?["status"]) == "running" }
+        let kept = pinnedIDs.union(viewedRunning)
         let previousSource = model.rows.first { $0.id == model.selected }?.source
         let previousIDs = Set(model.rows.map(\.id))
         var slotRead: [String: Bool] = [:]
@@ -552,11 +556,11 @@ final class KittenShell: NSObject {
             )
             // A finished task the user already read is not a slot row. Do not put it back as unread.
             // Pins keep that icon while its card is still open.
-            guard AgentIconList.shouldShow(candidate, holding: pinnedIDs, now: Date().timeIntervalSince1970) else { continue }
+            guard AgentIconList.shouldShow(candidate, holding: kept, now: Date().timeIntervalSince1970) else { continue }
             seenIDs.insert(id)
             candidates.append(candidate)
         }
-        let nextRows = AgentIconList.rows(candidates, holding: pinnedIDs, now: Date().timeIntervalSince1970).map { row in
+        let nextRows = AgentIconList.rows(candidates, holding: kept, now: Date().timeIntervalSince1970).map { row in
             KittenRow(
                 id: row.id,
                 source: row.source,
@@ -574,6 +578,12 @@ final class KittenShell: NSObject {
         model.rows = nextRows
         if reveal {
             model.expanded = true
+        }
+        if bubble.visible,
+           !bubble.model.taskID.isEmpty,
+           !model.rows.contains(where: { $0.id == bubble.model.taskID || $0.memberIDs.contains(bubble.model.taskID) }),
+           !bubble.model.options.isEmpty {
+            closeBubble(retire: false, markFinished: false)
         }
         if !model.selected.isEmpty, !model.rows.contains(where: { $0.id == model.selected }) {
             if (bubble.visible || !pinnedIDs.isEmpty),
@@ -800,15 +810,18 @@ final class KittenShell: NSObject {
             }
             self.onRead?(self.bubble.model.taskID)
             self.bubble.model.options = []
+            self.bubble.model.choicePrompt = ""
             let failed = (result["ok"] as? Bool) == false
             self.bubble.model.status = failed ? "Could not save" : "Sent"
-            self.bubble.model.summary = option.label
             self.repositionBubble()
         }
         bubble.model.onOpen = { [weak self] in
             guard let self else { return }
             self.onRead?(self.bubble.model.taskID)
             self.onOpenAgent?(self.bubble.model.source, self.bubble.model.taskID)
+        }
+        bubble.model.onLayout = { [weak self] in
+            self?.repositionBubble()
         }
         bubble.model.onPick = { [weak self] source in
             guard let self else { return }
@@ -913,8 +926,13 @@ final class KittenShell: NSObject {
         bubble.model.title = "Open"
         bubble.model.appName = ""
         bubble.model.summary = ""
+        bubble.model.answer = ""
+        bubble.model.choicePrompt = ""
+        bubble.model.awaitingAnswer = false
+        bubble.model.answerExpanded = false
         bubble.model.updated = 0
         bubble.model.status = ""
+        bubble.model.taskStatus = ""
         bubble.model.options = []
         bubble.model.taskID = ""
         SoundPlayer.shared.play(.select, timbre: timbre)
@@ -939,6 +957,9 @@ final class KittenShell: NSObject {
                 let cached = string(taskCache[id]?["status"])
                 let live = cached.isEmpty ? row.status : cached
                 // A finished card is read once it is open. Waiting stays in the capsule until the user answers.
+                if live == "running" {
+                    viewedRunning.insert(id)
+                }
                 if (live == "done" || live == "fail") && !pendingOptions(in: taskCache[id]) {
                     readFinished.insert(id)
                 }
@@ -952,47 +973,8 @@ final class KittenShell: NSObject {
         }
         let focusID = taskID ?? row.id
         selectRow(row.id)
-        let task = taskFields(id: focusID, fallback: row)
         bubble.model.kind = kind
-        let focusStatus = string(taskCache[focusID]?["status"])
-        let liveStatus = focusStatus.isEmpty ? row.status : focusStatus
-        let agent = SlotFace.displayName(for: row.source)
-        let prompt = string(taskCache[focusID]?["prompt"]).trimmingCharacters(in: .whitespacesAndNewlines)
-        var subject = row.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if subject == "New chat" || (!prompt.isEmpty && subject == prompt) {
-            subject = ""
-        }
-        let optionIDs = task.options.map(\.id)
-        let rawDetail = string(taskCache[focusID]?["detail"])
-        bubble.model.title = PermissionCopy.visibleTitle(
-            kind: task.kind,
-            status: liveStatus,
-            title: subject,
-            detail: rawDetail,
-            agent: agent,
-            optionIDs: optionIDs
-        )
-        bubble.model.appName = agent
-        bubble.model.updated = number(taskCache[focusID]?["updated"])
-        bubble.model.source = row.source
-        bubble.model.icon = row.icon
-        bubble.model.status = statusLine(liveStatus)
-        let cachedSummary = string(taskCache[focusID]?["summary"])
-        let blurbSource = cachedSummary.isEmpty ? task.summary : cachedSummary
-        let rawTitle = string(taskCache[focusID]?["title"])
-        bubble.model.summary = PermissionCopy.cardBlurb(
-            summary: blurbSource,
-            detail: rawDetail,
-            kind: task.kind,
-            status: liveStatus,
-            optionIDs: optionIDs,
-            title: rawTitle.isEmpty ? subject : rawTitle
-        )
-        bubble.model.options = task.options
-        bubble.model.taskID = focusID
-        bubble.model.requestID = task.requestID
-        bubble.model.questionID = task.questionID
-        bubble.model.taskKind = task.kind
+        applyCardFields(id: focusID, row: row)
         if sound { SoundPlayer.shared.play(.select, timbre: timbre) }
         let anchor = model.expanded ? iconFrame(rowIndex) : hitFrame
         bubble.show(anchor: anchor, capsule: hitFrame, screen: canvas().visible)
@@ -1023,63 +1005,85 @@ final class KittenShell: NSObject {
 
     /// Allow and Deny close the card in the choice handler. A newer running chat
     /// also drops an older permission that was left open on this agent.
+    /// Status, Q, A, and choices refresh from the live task so the open card stays current.
     private func retainOpenBubble() {
         guard bubble.visible else { return }
+        guard bubble.model.kind == .card || bubble.model.kind == .alert else { return }
         let openID = bubble.model.taskID
         let optionIDs = bubble.model.options.map(\.id)
         let permission = PermissionCopy.isPermission(kind: bubble.model.taskKind, status: "wait", optionIDs: optionIDs)
+        let face = model.rows.first { $0.id == openID || $0.memberIDs.contains(openID) }
         if permission {
             let live = string(taskCache[openID]?["status"])
-            let face = model.rows.first { $0.id == openID || $0.memberIDs.contains(openID) }
             let isFace = face?.id == openID
             if !AgentIconList.permissionStaysOpen(taskStatus: live, isFace: isFace) {
                 closeBubble(retire: false, markFinished: false)
                 return
             }
-            let detail = string(taskCache[openID]?["detail"])
-            let title = string(taskCache[openID]?["title"])
-            let blurb = string(taskCache[openID]?["summary"])
-            let agent = bubble.model.appName.isEmpty ? SlotFace.displayName(for: bubble.model.source) : bubble.model.appName
-            bubble.model.title = PermissionCopy.visibleTitle(
-                kind: bubble.model.taskKind,
-                status: live,
-                title: title,
-                detail: detail,
-                agent: agent,
-                optionIDs: optionIDs
-            )
-            bubble.model.summary = PermissionCopy.cardBlurb(
-                summary: blurb,
-                detail: detail,
-                kind: bubble.model.taskKind,
-                status: live,
-                optionIDs: optionIDs,
-                title: title
-            )
-            if !live.isEmpty {
-                bubble.model.status = statusLine(live)
-            }
-        } else if bubble.model.kind == .card || bubble.model.kind == .alert {
-            let live = string(taskCache[openID]?["status"])
-            let detail = string(taskCache[openID]?["detail"])
-            let blurb = string(taskCache[openID]?["summary"])
-            let kind = string(taskCache[openID]?["kind"])
-            let title = string(taskCache[openID]?["title"])
-            bubble.model.summary = PermissionCopy.cardBlurb(
-                summary: blurb,
-                detail: detail,
-                kind: kind.isEmpty ? bubble.model.taskKind : kind,
-                status: live,
-                optionIDs: optionIDs,
-                title: title
-            )
-            if !live.isEmpty {
-                bubble.model.status = statusLine(live)
-            }
-            let updated = number(taskCache[openID]?["updated"])
-            if updated > 0 { bubble.model.updated = updated }
         }
+        applyCardFields(id: openID, row: face)
         repositionBubble()
+    }
+
+    private func applyCardFields(id: String, row: KittenRow?) {
+        if bubble.model.taskID != id {
+            bubble.model.answerExpanded = false
+        }
+        let task = taskFields(id: id, fallback: row)
+        let cached = string(taskCache[id]?["status"])
+        let status = cached.isEmpty ? (row?.status ?? "") : cached
+        let source = row?.source ?? bubble.model.source
+        let agent = SlotFace.displayName(for: source)
+        let prompt = string(taskCache[id]?["prompt"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        var subject = (row?.title ?? string(taskCache[id]?["title"])).trimmingCharacters(in: .whitespacesAndNewlines)
+        if subject == "New chat" || (!prompt.isEmpty && subject == prompt) {
+            subject = ""
+        }
+        let optionIDs = task.options.map(\.id)
+        let rawDetail = string(taskCache[id]?["detail"])
+        let rawTitle = string(taskCache[id]?["title"])
+        bubble.model.title = PermissionCopy.visibleTitle(
+            kind: task.kind,
+            status: status,
+            title: rawTitle.isEmpty ? subject : rawTitle,
+            detail: rawDetail,
+            agent: agent,
+            optionIDs: optionIDs
+        )
+        bubble.model.appName = agent
+        let updated = number(taskCache[id]?["updated"])
+        if updated > 0 { bubble.model.updated = updated }
+        bubble.model.source = source
+        if let icon = row?.icon { bubble.model.icon = icon }
+        if !status.isEmpty {
+            bubble.model.taskStatus = status
+            bubble.model.status = PermissionCopy.statusLine(status)
+        }
+        let cachedSummary = string(taskCache[id]?["summary"])
+        let blurbSource = cachedSummary.isEmpty ? task.summary : cachedSummary
+        bubble.model.summary = PermissionCopy.cardBlurb(
+            summary: blurbSource,
+            detail: rawDetail,
+            kind: task.kind,
+            status: status,
+            optionIDs: optionIDs,
+            title: rawTitle.isEmpty ? subject : rawTitle
+        )
+        let cachedAnswer = string(taskCache[id]?["answer"])
+        bubble.model.answer = PermissionCopy.cardAnswer(cachedAnswer.isEmpty ? task.answer : cachedAnswer)
+        bubble.model.awaitingAnswer = status == "running" || status == "wait"
+        bubble.model.options = task.options
+        bubble.model.choicePrompt = PermissionCopy.choiceQuestion(
+            kind: task.kind,
+            detail: rawDetail,
+            stored: task.choicePrompt,
+            status: status,
+            optionIDs: optionIDs
+        )
+        bubble.model.taskID = id
+        bubble.model.requestID = task.requestID
+        bubble.model.questionID = task.questionID
+        bubble.model.taskKind = task.kind
     }
 
     private func closeBubble(retire: Bool, markFinished: Bool = true) {
@@ -1425,13 +1429,15 @@ final class KittenShell: NSObject {
 
     private struct TaskFields {
         var summary = ""
+        var answer = ""
+        var choicePrompt = ""
         var options: [BubbleChoice] = []
         var requestID = ""
         var questionID = ""
         var kind = ""
     }
 
-    private func taskFields(id: String, fallback: KittenRow) -> TaskFields {
+    private func taskFields(id: String, fallback: KittenRow?) -> TaskFields {
         var fields = TaskFields()
         guard let task = taskCache[id] else { return fields }
         let prompt = string(task["prompt"]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1442,12 +1448,16 @@ final class KittenShell: NSObject {
         } else if !detail.isEmpty && detail != prompt && detail != "Chat" && !PermissionCopy.actionKinds.contains(detail) {
             fields.summary = detail
         }
+        fields.answer = string(task["answer"])
+        fields.choicePrompt = string(task["choice_prompt"])
         fields.requestID = string(task["request_id"])
         fields.questionID = string(task["question_id"])
         fields.kind = string(task["kind"])
-        fields.options = choices(task["options"])
         let status = string(task["status"])
-        let useStatus = status.isEmpty ? fallback.status : status
+        let useStatus = status.isEmpty ? (fallback?.status ?? "") : status
+        if useStatus == "wait" || useStatus == "done" || useStatus == "fail" {
+            fields.options = choices(task["options"])
+        }
         if fields.options.isEmpty, useStatus == "wait", fields.kind == "permission" {
             fields.options = [
                 BubbleChoice(id: "allow", label: "Allow"),
@@ -1483,22 +1493,13 @@ final class KittenShell: NSObject {
         }
     }
 
-    private func statusLine(_ status: String) -> String {
-        switch status {
-        case "running": return "Running"
-        case "wait": return "Waiting"
-        case "done": return "Done"
-        case "fail": return "Failed"
-        default: return ""
-        }
-    }
-
     /// Allow / Deny (or other choices) keep a finished row on the capsule until answered.
     private func pendingOptions(in task: [String: Any]?) -> Bool {
         guard let task else { return false }
+        let status = string(task["status"])
+        guard status == "wait" || status == "done" || status == "fail" else { return false }
         let options = choices(task["options"])
         if !options.isEmpty { return true }
-        let status = string(task["status"])
         let kind = string(task["kind"])
         return status == "wait" && kind == "permission"
     }

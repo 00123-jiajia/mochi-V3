@@ -8,6 +8,8 @@ public struct CursorTask: Equatable {
     public var prompt: String
     public var detail: String
     public var summary: String
+    public var answer: String
+    public var choicePrompt: String
     public var options: [[String: String]]
     public var allowMultiple: Bool
     public var questionID: String
@@ -25,6 +27,8 @@ public struct CursorTask: Equatable {
         prompt: String = "",
         detail: String = "",
         summary: String = "",
+        answer: String = "",
+        choicePrompt: String = "",
         options: [[String: String]] = [],
         allowMultiple: Bool = false,
         questionID: String = "",
@@ -40,6 +44,8 @@ public struct CursorTask: Equatable {
         self.prompt = prompt
         self.detail = detail
         self.summary = summary
+        self.answer = answer
+        self.choicePrompt = choicePrompt
         self.options = options
         self.allowMultiple = allowMultiple
         self.questionID = questionID
@@ -59,6 +65,8 @@ public struct CursorTask: Equatable {
             "prompt": prompt,
             "detail": detail,
             "summary": summary,
+            "answer": answer,
+            "choice_prompt": choicePrompt,
             "options": options,
             "allow_multiple": allowMultiple,
             "question_id": questionID,
@@ -103,10 +111,9 @@ public enum TaskReader {
             guard let item = raw as? [String: Any] else { continue }
             var status = item["status"] as? String ?? "running"
             if status == "closed" { continue }
-            if !["running", "wait", "done", "fail"].contains(status) {
-                status = "running"
-            }
-            let updated = (item["updated"] as? NSNumber)?.doubleValue ?? (item["updated"] as? Double) ?? 0
+            // A leftover "pending" approval is not live work. Do not paint it as running.
+            guard ["running", "wait", "done", "fail"].contains(status) else { continue }
+            let updated = Self.timestamp(item["updated"])
             // Running and waiting chats stay visible until they settle. Only finished
             // rows age out after doneKeep so the capsule can keep live icons.
             if status == "done" || status == "fail" {
@@ -134,16 +141,22 @@ public enum TaskReader {
             }
             let rawDetail = item["detail"] as? String ?? ""
             let rawSummary = item["summary"] as? String ?? ""
+            let rawAnswer = item["answer"] as? String ?? ""
+            let rawChoice = item["choice_prompt"] as? String ?? ""
             let agent = SlotFace.displayName(for: source)
             let shownKind: String
             let shownDetail: String
             let shownSummary: String
+            let shownAnswer: String
+            let shownChoice: String
             let shownOptions: [[String: String]]
             if permission && answeredWait {
                 title = agent
                 shownKind = ""
                 shownDetail = ""
                 shownSummary = includePrompts ? PermissionCopy.abbreviate(rawSummary) : ""
+                shownAnswer = includePrompts ? PermissionCopy.cardAnswer(rawAnswer) : ""
+                shownChoice = ""
                 shownOptions = []
             } else if permission {
                 title = PermissionCopy.actionKind(detail: rawDetail, title: title)
@@ -151,6 +164,8 @@ public enum TaskReader {
                 shownDetail = ""
                 // Permission cards need the chat blurb even when other prompt fields stay hidden.
                 shownSummary = PermissionCopy.abbreviate(rawSummary)
+                shownAnswer = PermissionCopy.cardAnswer(rawAnswer)
+                shownChoice = ""
                 shownOptions = options
             } else {
                 title = PermissionCopy.visibleTitle(
@@ -164,6 +179,8 @@ public enum TaskReader {
                 shownKind = includePrompts ? kindRaw : ""
                 shownDetail = includePrompts ? PermissionCopy.visibleDetail(kind: "", status: status, detail: rawDetail, optionIDs: []) : ""
                 shownSummary = includePrompts ? PermissionCopy.abbreviate(rawSummary) : ""
+                shownAnswer = includePrompts ? PermissionCopy.cardAnswer(rawAnswer) : ""
+                shownChoice = includePrompts && status == "wait" ? PermissionCopy.abbreviate(rawChoice) : ""
                 shownOptions = options
             }
             visible.append(CursorTask(
@@ -174,6 +191,8 @@ public enum TaskReader {
                 prompt: "",
                 detail: shownDetail,
                 summary: shownSummary,
+                answer: shownAnswer,
+                choicePrompt: shownChoice,
                 options: shownOptions,
                 allowMultiple: item["allow_multiple"] as? Bool ?? false,
                 questionID: item["question_id"] as? String ?? "",
@@ -184,6 +203,20 @@ public enum TaskReader {
             ))
         }
         return visible.sorted { $0.id < $1.id }
+    }
+
+    /// Hook files store either a unix time or an ISO-8601 string.
+    public static func timestamp(_ value: Any?) -> Double {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let number = value as? Double { return number }
+        guard let text = value as? String else { return 0 }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let number = Double(trimmed) { return number }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: trimmed) { return date.timeIntervalSince1970 }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: trimmed)?.timeIntervalSince1970 ?? 0
     }
 
     public static func transcriptHints(now: Double = Date().timeIntervalSince1970) -> [CursorTask] {

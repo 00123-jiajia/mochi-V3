@@ -487,10 +487,11 @@ func SpecConstantsAndShellGeometry() throws {
     check(AppConfig.bubbleRadius == 12)
     check(AppConfig.beakWidth == 10)
     check(AppConfig.beakHeight == 16)
-    check(AppConfig.beakGap == 6)
+    check(AppConfig.beakGap == 10)
     check(abs(AppConfig.beakTipRadius - 2.8) < 0.001)
     check(AppConfig.bubbleMinWidth == 160)
-    check(AppConfig.bubbleMaxWidth == 220)
+    check(AppConfig.bubbleMaxWidth == 280)
+    check(AppConfig.bubbleBeakInset == 0)
     check(AppConfig.bubblePadX == 12)
     check(AppConfig.bubblePadY == 8)
     check(AppConfig.bubbleMinHeight == 44)
@@ -639,6 +640,9 @@ func SpecConstantsAndShellGeometry() throws {
     check(rightBubble.frame.intersects(rightCapsule) == false)
     check(rightBubble.frame.maxX <= rightAnchor.minX - AppConfig.beakGap)
     check(abs((rightBubble.frame.maxY - rightBubble.beakY) - rightAnchor.midY) < 1)
+    let grown = BubblePlacer.place(anchor: rightAnchor, capsule: rightCapsule, size: CGSize(width: 280, height: 200), screen: screen)
+    check(abs(grown.frame.maxY - rightBubble.frame.maxY) < 0.1)
+    check(grown.frame.minY < rightBubble.frame.minY)
     let leftCapsule = CGRect(x: 16, y: 200, width: AppConfig.capsuleWidth, height: 361)
     let leftAnchor = CGRect(x: leftCapsule.midX - 14, y: 280, width: 28, height: 28)
     let leftBubble = BubblePlacer.place(anchor: leftAnchor, capsule: leftCapsule, size: CGSize(width: 220, height: 120), screen: screen)
@@ -754,6 +758,12 @@ func SpecConstantsAndShellGeometry() throws {
     for name in IslandPrefs.submitSounds + IslandPrefs.doneSounds + IslandPrefs.stuckSounds {
         check(ToneSynth.peak(name) > 0.05)
         check(ToneSynth.recipe(name).isEmpty == false)
+        let once = ToneSynth.render(name)
+        let cue = ToneSynth.renderCue(name)
+        let silence = Int(ToneSynth.cueGap * ToneSynth.sampleRate)
+        check(ToneSynth.cueRepeats == 3)
+        check(cue.count == once.count * 3 + silence * 2)
+        check((cue.map { abs($0) }.max() ?? 0) > 0.05)
     }
     let legacyCues = try JSONDecoder().decode(IslandPrefs.self, from: Data("{\"sound\":\"pop\"}".utf8))
     check(legacyCues.sound == "pop")
@@ -885,6 +895,12 @@ func AgentIconsStayOnePerConversation() {
         AgentIconCandidate(id: "quiet-new", source: "cursor", title: "R", status: "running", read: false, updated: quiet),
         now: clock
     ) == false)
+    // Opening a running chat keeps the icon after the card closes, even if the hook has gone quiet.
+    check(AgentIconList.shouldShow(
+        AgentIconCandidate(id: "seen-running", source: "cursor", title: "R", status: "running", read: true, updated: quiet),
+        holding: ["seen-running"],
+        now: clock
+    ))
     check(AgentIconList.shouldShow(
         AgentIconCandidate(id: "unread-done", source: "cursor", title: "D", status: "done", read: false, updated: quiet),
         now: clock
@@ -964,6 +980,108 @@ func QuestionBlurbShowsInEveryStatus() {
         optionIDs: [],
         title: "Cursor"
     ).isEmpty)
+    check(PermissionCopy.cardBlurb(
+        summary: "",
+        detail: "Shell",
+        kind: "permission",
+        status: "wait",
+        optionIDs: ["allow", "deny"]
+    ).isEmpty)
+    check(PermissionCopy.choiceQuestion(
+        kind: "permission",
+        detail: "Shell",
+        stored: "",
+        status: "wait",
+        optionIDs: ["allow", "deny"]
+    ) == "Shell needs Allow")
+    check(PermissionCopy.choiceQuestion(
+        kind: "permission",
+        detail: "MCP",
+        stored: "",
+        status: "wait",
+        optionIDs: ["allow", "deny"]
+    ) == "MCP needs Allow")
+    check(PermissionCopy.statusLine("running") == "Running")
+    check(PermissionCopy.statusLine("wait") == "Waiting")
+    check(PermissionCopy.statusLine("done") == "Done")
+    check(PermissionCopy.statusLine("fail") == "Failed")
+}
+
+func CardQAShowsAnswerAndChoice() throws {
+    let id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    var live: [String: Any] = [:]
+    let submit = HookEvents.interpret(sourceFlag: nil, payload: [
+        "hook_event_name": "beforeSubmitPrompt",
+        "conversation_id": id,
+        "prompt": "全部的连接方式"
+    ])!
+    HookEvents.merge(submit, into: &live, now: 1)
+    check((live[id] as? [String: Any])?["answer"] == nil)
+    let thought = HookEvents.interpret(sourceFlag: nil, payload: [
+        "hook_event_name": "afterAgentThought",
+        "conversation_id": id,
+        "text": "thinking stays out of the answer line"
+    ])
+    check(thought?.answer == "")
+    HookEvents.merge(thought!, into: &live, now: 2)
+    check((live[id] as? [String: Any])?["answer"] == nil)
+    let reply = HookEvents.interpret(sourceFlag: nil, payload: [
+        "hook_event_name": "afterAgentResponse",
+        "conversation_id": id,
+        "text": "代码在 /Users/example/Mochi-V3"
+    ])
+    check(reply?.answer == "代码在 /Users/example/Mochi-V3")
+    check(reply?.status == "heartbeat")
+    HookEvents.merge(reply!, into: &live, now: 3)
+    check((live[id] as? [String: Any])?["summary"] as? String == "全部的连接方式")
+    check((live[id] as? [String: Any])?["answer"] as? String == "代码在 /Users/example/Mochi-V3")
+    check((live[id] as? [String: Any])?["status"] as? String == "running")
+    let next = HookEvents.interpret(sourceFlag: nil, payload: [
+        "hook_event_name": "beforeSubmitPrompt",
+        "conversation_id": id,
+        "prompt": "再问一句"
+    ])!
+    HookEvents.merge(next, into: &live, now: 4)
+    check((live[id] as? [String: Any])?["summary"] as? String == "再问一句")
+    check((live[id] as? [String: Any])?["answer"] == nil)
+    let asked = HookEvents.interpret(sourceFlag: nil, payload: [
+        "hook_event_name": "preToolUse",
+        "conversation_id": id,
+        "tool_name": "AskQuestion",
+        "tool_input": [
+            "questions": [[
+                "id": "q1",
+                "prompt": "用哪种连接？",
+                "options": [
+                    ["id": "wifi", "label": "Wi-Fi"],
+                    ["id": "eth", "label": "Ethernet"]
+                ]
+            ]]
+        ]
+    ])
+    check(asked?.status == "wait")
+    check(asked?.kind == "choice")
+    check(asked?.choicePrompt == "用哪种连接？")
+    check(asked?.options.map { $0["id"] ?? "" } == ["wifi", "eth"])
+    HookEvents.merge(asked!, into: &live, now: 5)
+    let record = live[id] as? [String: Any]
+    check(record?["status"] as? String == "wait")
+    check(record?["choice_prompt"] as? String == "用哪种连接？")
+    check(record?["summary"] as? String == "再问一句")
+    check(PermissionCopy.choiceQuestion(
+        kind: "choice",
+        detail: "",
+        stored: "用哪种连接？",
+        status: "wait",
+        optionIDs: ["wifi", "eth"]
+    ) == "用哪种连接？")
+    check(PermissionCopy.choiceQuestion(
+        kind: "plan",
+        detail: "",
+        stored: "",
+        status: "wait",
+        optionIDs: ["approve", "keep"]
+    ) == "Approve this plan?")
 }
 
 func DockPrefDefaultsToRight() {
@@ -1248,13 +1366,19 @@ func ChatSummarySurvivesLaterStatus() throws {
     check(submit?.summary.contains(longFixture) == false)
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-summary-\(UUID().uuidString).json")
     HookEvents.commit(submit!, tasksURL: url, now: 10)
+    let longReply = String(repeating: "assistant reply stays out ", count: 24)
     let heartbeat = HookEvents.interpret(sourceFlag: nil, payload: [
         "hook_event_name": "afterAgentResponse",
         "conversation_id": id,
-        "text": "assistant reply stays out"
+        "text": longReply
     ])
     check(heartbeat?.summary == "")
     check(heartbeat?.promptSubmitted == false)
+    check(heartbeat?.status == "heartbeat")
+    let storedAnswer = PermissionCopy.cardAnswer(longReply)
+    check(heartbeat?.answer == storedAnswer)
+    check((heartbeat?.answer.count ?? 0) <= PermissionCopy.answerLimit)
+    check(heartbeat?.answer.contains(longReply) == false)
     HookEvents.commit(heartbeat!, tasksURL: url, now: 11)
     let done = HookEvents.interpret(sourceFlag: nil, payload: [
         "hook_event_name": "sessionEnd",
@@ -1263,19 +1387,22 @@ func ChatSummarySurvivesLaterStatus() throws {
     ])
     check(done?.status == "done")
     check(done?.summary == "")
+    check(done?.answer == "")
     HookEvents.commit(done!, tasksURL: url, now: 12)
     let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
     let tasks = root?["tasks"] as? [String: Any]
     let record = tasks?[id] as? [String: Any]
     check(record?["status"] as? String == "done")
     check(record?["summary"] as? String == stored)
+    check(record?["answer"] as? String == storedAnswer)
     check(record?["prompt"] == nil)
     let text = String(data: try Data(contentsOf: url), encoding: .utf8) ?? ""
     check(text.contains(longFixture) == false)
-    check(text.contains("assistant reply stays out") == false)
+    check(text.contains(longReply) == false)
     check(text.contains("should not replace the blurb") == false)
     let shown = TaskReader.load(tasksURL: url, now: 13, includePrompts: true)
     check(shown.first { $0.id == id }?.summary == stored)
+    check(shown.first { $0.id == id }?.answer == storedAnswer)
     check(PermissionCopy.cardBlurb(
         summary: stored,
         detail: "Chat",
@@ -1306,21 +1433,57 @@ func ChatSummarySurvivesLaterStatus() throws {
     HookEvents.merge(childStart!, into: &live, now: 2)
     check((live[parent] as? [String: Any])?["summary"] as? String == fixture)
     check((live[child] as? [String: Any])?["summary"] as? String == "Subagent fixture task")
+    let longChildOutput = String(repeating: "Agent output fixture stays out ", count: 6)
     let childDone = HookEvents.interpret(sourceFlag: nil, payload: [
         "hook_event_name": "subagentStop",
         "conversation_id": parent,
         "subagent_id": child,
         "task": "",
-        "summary": "Agent output fixture stays out"
+        "summary": longChildOutput
     ])
     check(childDone?.summary == "")
+    check(childDone?.answer == PermissionCopy.cardAnswer(longChildOutput))
     check(childDone?.status == "done")
     HookEvents.merge(childDone!, into: &live, now: 3)
     check((live[child] as? [String: Any])?["status"] as? String == "done")
     check((live[child] as? [String: Any])?["summary"] as? String == "Subagent fixture task")
+    check((live[child] as? [String: Any])?["answer"] as? String == PermissionCopy.cardAnswer(longChildOutput))
     check((live[parent] as? [String: Any])?["summary"] as? String == fixture)
     let blob = String(data: try JSONSerialization.data(withJSONObject: live), encoding: .utf8) ?? ""
-    check(blob.contains("Agent output fixture stays out") == false)
+    check(blob.contains(longChildOutput) == false)
+
+    let codexID = "01a1cfbd-fd7f-7001-b887-2f0b0f96df9e"
+    let codexReply = "收到，测试正常。"
+    let codexStop = HookEvents.interpret(sourceFlag: "codex", payload: [
+        "hook_event_name": "Stop",
+        "session_id": codexID,
+        "last_assistant_message": codexReply,
+        "transcript_path": "/tmp/SECRET-transcript",
+        "prompt": "SECRET prompt"
+    ])
+    check(codexStop?.source == "codex")
+    check(codexStop?.status == "done")
+    check(codexStop?.summary == "")
+    check(codexStop?.answer == codexReply)
+    var codexTasks: [String: Any] = [
+        codexID: ["id": codexID, "source": "codex", "status": "running", "summary": "测试", "title": "Codex"]
+    ]
+    HookEvents.merge(codexStop!, into: &codexTasks, now: 4)
+    let codexRecord = codexTasks[codexID] as? [String: Any]
+    check(codexRecord?["status"] as? String == "done")
+    check(codexRecord?["summary"] as? String == "测试")
+    check(codexRecord?["answer"] as? String == codexReply)
+    check(codexRecord?["last_assistant_message"] == nil)
+    check(codexRecord?["prompt"] == nil)
+    let longCodex = String(repeating: "codex reply stays capped ", count: 40)
+    let capped = HookEvents.interpret(sourceFlag: "codex", payload: [
+        "hook_event_name": "Stop",
+        "session_id": codexID,
+        "last_assistant_message": longCodex
+    ])
+    check(capped?.answer == PermissionCopy.cardAnswer(longCodex))
+    check((capped?.answer.count ?? 0) <= PermissionCopy.answerLimit)
+    check(capped?.answer.contains(longCodex) == false)
 }
 
 func SubmittedChatKeepsTheAgentAndDropsThePrompt() throws {
@@ -1424,6 +1587,13 @@ func SubmittedChatKeepsTheAgentAndDropsThePrompt() throws {
         summary: "",
         detail: "Shell",
         kind: "permission",
+        status: "wait",
+        optionIDs: ["allow", "deny"]
+    ).isEmpty)
+    check(PermissionCopy.choiceQuestion(
+        kind: "permission",
+        detail: "Shell",
+        stored: "",
         status: "wait",
         optionIDs: ["allow", "deny"]
     ) == "Shell needs Allow")
@@ -1604,6 +1774,13 @@ func CodexAndClaudeHooksInstallMarkedCommands() throws {
     let commands = groups.flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
     check(commands.contains { ($0["command"] as? String)?.contains("/bin/echo keep") == true })
     check(commands.contains { ($0[AppConfig.hookMarker] as? Int) == AppConfig.hookVersion && ($0["command"] as? String)?.contains("--source codex") == true })
+    let command = "\(binary.path) --source codex"
+    let trusted = CodexHookTrust.identityHash(eventKey: "user_prompt_submit", command: command, fileTimeout: 10)
+    check(configText.contains("trusted_hash = \"\(trusted)\""))
+    check(configText.contains("js_repl = false"))
+    check(HookInstaller.codexStatus(configURL: config, hooksURL: hooks, binaryURL: binary).connected)
+    let stale = configText.replacingOccurrences(of: trusted, with: "sha256:0000000000000000000000000000000000000000000000000000000000000000")
+    check(CodexHookTrust.configByTrusting(stale, entries: [(key: "\(hooks.resolvingSymlinksInPath().path):user_prompt_submit:0:0", hash: trusted)]) != stale)
     let settings = directory.appendingPathComponent("settings.json")
     try #"{"theme":"dark","hooks":{}}"#.write(to: settings, atomically: true, encoding: .utf8)
     let claude = HookInstaller.installClaude(settingsURL: settings, binaryURL: binary, privacyAccepted: true)
@@ -1616,6 +1793,11 @@ func CodexAndClaudeHooksInstallMarkedCommands() throws {
     check(CodexFeatureFlag.enablingHooks(in: ambiguous) == nil)
     check(CodexFeatureFlag.isEnabled(in: "features.hooks = true\n") == true)
     check(CodexFeatureFlag.isEnabled(in: ambiguous) == false)
+    let sample = "/tmp/MochiHookCLI --source codex"
+    check(CodexHookTrust.identityHash(eventKey: "permission_request", command: sample, fileTimeout: 300) == "sha256:e0a1444cb415753d008f86138a8ae766b73742b68bc011351c0945341092eca4")
+    check(CodexHookTrust.identityHash(eventKey: "session_end", command: sample, fileTimeout: 10) == "sha256:ec9f0f6f204d083b20d1a5e387cf986cd849ae75dea4124e209d86141ec35f0c")
+    check(CodexHookTrust.normalizedTimeout(eventKey: "session_end", fileTimeout: 10) == 3)
+    check(CodexHookTrust.normalizedTimeout(eventKey: "user_prompt_submit", fileTimeout: 10) == 10)
 }
 
 func HookRetargetPointsAtTheOpenApp() throws {
@@ -1931,7 +2113,7 @@ func PassiveHooksReportTheShortlist() throws {
         environment: ["GROK_SESSION_ID": "   ", "GROK_HOOK_EVENT": ""]
     )
     check(plainCursor?.source == "cursor")
-    check(plainCursor?.status == "heartbeat")
+    check(plainCursor?.status == "done")
     let importedStop = HookEvents.interpret(sourceFlag: "grok", payload: [
         "hook_event_name": "SubagentStop",
         "sessionId": "grok-1"
@@ -2015,6 +2197,20 @@ func PassiveHooksReportTheShortlist() throws {
     let names = try FileManager.default.contentsOfDirectory(at: grokDir, includingPropertiesForKeys: nil).map(\.lastPathComponent)
     check(names == ["mochi-island.json"])
     check(names.contains { $0.contains(".tmp") } == false)
+    check(PassiveHooks.grokStatus(directory: grokDir, binaryURL: other).connected == false)
+    let moved = directory.appendingPathComponent("next-hook")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: moved)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: moved.path)
+    check(HookInstaller.retargetNested(fileURL: grokFile, binaryURL: moved, source: "grok"))
+    check(PassiveHooks.grokStatus(directory: grokDir, binaryURL: moved).connected)
+    check(PassiveHooks.grokStatus(directory: grokDir, binaryURL: binary).connected == false)
+    let again = try JSONSerialization.jsonObject(with: Data(contentsOf: grokFile)) as? [String: Any]
+    let movedGroup = ((again?["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]])?.first
+    let movedEntry = (movedGroup?["hooks"] as? [[String: Any]])?.first
+    let movedCommand = movedEntry?["command"] as? String ?? ""
+    check(movedCommand.contains(moved.path))
+    check(movedCommand.contains("--source grok"))
+    check(movedCommand.contains(binary.path) == false)
 
     let plugin = directory.appendingPathComponent("plugins/mochi-island.js")
     try FileManager.default.createDirectory(at: plugin.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -2194,13 +2390,91 @@ func GeminiHookMapsTheShortlist() throws {
     check(keptCommands.contains { $0[AppConfig.hookMarker] != nil } == false)
 }
 
+func GrokBotSessionPublishesTheOpenTurn() throws {
+    let now = 1_800_000_000.0
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-grok-session-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let tasksURL = directory.appendingPathComponent("tasks.json")
+    let cursorID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    try AtomicFile.writeJSON([
+        "tasks": [
+            cursorID: ["id": cursorID, "source": "cursor", "status": "running", "title": "Cursor", "updated": now]
+        ]
+    ], to: tasksURL)
+
+    let question = "Grok session question stays short"
+    let reply = "Grok session answer is ready"
+    let longQuestion = String(repeating: "question ", count: 12)
+    let longReply = String(repeating: "answer ", count: 90)
+    func write(_ name: String, _ entries: [[String: Any]]) throws {
+        try AtomicFile.writeJSON(["schemaVersion": 1, "value": ["entries": entries]], to: directory.appendingPathComponent(name))
+    }
+    try write("waiting.json", [[
+        "kind": "send-message",
+        "timestampMs": (now - 20) * 1000,
+        "message": ["type": "text", "content": question]
+    ]])
+    try write("finished.json", [
+        [
+            "kind": "send-message",
+            "timestampMs": (now - 40) * 1000,
+            "message": ["type": "text", "content": longQuestion]
+        ],
+        [
+            "kind": "message",
+            "role": "assistant",
+            "timestampMs": (now - 30) * 1000,
+            "isStreaming": false,
+            "content": longReply
+        ]
+    ])
+    try write("stale.json", [[
+        "kind": "send-message",
+        "timestampMs": (now - 4_000) * 1000,
+        "message": ["type": "text", "content": "SECRET old prompt"]
+    ]])
+    try write("notes.txt", [["kind": "send-message"]])
+
+    GrokBotSession.sync(directory: directory, tasksURL: tasksURL, now: now)
+    let root = try JSONSerialization.jsonObject(with: Data(contentsOf: tasksURL)) as? [String: Any]
+    let tasks = root?["tasks"] as? [String: Any]
+    check((tasks?[cursorID] as? [String: Any])?["source"] as? String == "cursor")
+    let grok = (tasks ?? [:]).values.compactMap { $0 as? [String: Any] }.filter { $0["source"] as? String == "grok-bot" }
+    check(grok.count == 2)
+    let waiting = grok.first { $0["status"] as? String == "running" }
+    let finished = grok.first { $0["status"] as? String == "done" }
+    check(waiting?["summary"] as? String == question)
+    check(waiting?["answer"] == nil)
+    check(waiting?["origin"] as? String == GrokBotSession.origin)
+    check(waiting?["updated"] as? Double == now)
+    let storedQuestion = PermissionCopy.abbreviate(longQuestion)
+    let storedAnswer = PermissionCopy.cardAnswer(longReply)
+    check(finished?["summary"] as? String == storedQuestion)
+    check(finished?["answer"] as? String == storedAnswer)
+    check((finished?["answer"] as? String ?? "").contains(longReply) == false)
+    let text = String(data: try Data(contentsOf: tasksURL), encoding: .utf8) ?? ""
+    check(text.contains("SECRET old prompt") == false)
+    check(text.contains(longReply) == false)
+
+    try FileManager.default.removeItem(at: directory.appendingPathComponent("finished.json"))
+    GrokBotSession.sync(directory: directory, tasksURL: tasksURL, now: now + 1)
+    let again = try JSONSerialization.jsonObject(with: Data(contentsOf: tasksURL)) as? [String: Any]
+    let left = ((again?["tasks"] as? [String: Any]) ?? [:]).values.compactMap { $0 as? [String: Any] }.filter { $0["source"] as? String == "grok-bot" }
+    check(left.count == 1)
+    check(left.first?["status"] as? String == "running")
+    check((again?["tasks"] as? [String: Any])?[cursorID] != nil)
+}
+
 func ConnectorRegistryNamesCursorAndCodex() {
     let ids = AgentConnectorRegistry.primary.map(\.id)
-    check(ids == ["cursor", "codex"])
+    check(ids == ["cursor", "codex", "grok-bot"])
     check(AgentConnectorRegistry.connector(for: "cursor")?.displayName == "Cursor")
     check(AgentConnectorRegistry.connector(for: "codex")?.displayName == "Codex")
+    check(AgentConnectorRegistry.connector(for: "grok")?.displayName == "Grok Bot")
+    check(AgentConnectorRegistry.connector(for: "grok-bot")?.id == "grok-bot")
     check(AgentConnectorRegistry.connector(for: "cursor")?.needsPrivacyAck == true)
     check(AgentConnectorRegistry.connector(for: "codex")?.needsPrivacyAck == false)
+    check(AgentConnectorRegistry.connector(for: "grok-bot")?.needsPrivacyAck == false)
     check(AgentConnectorRegistry.connector(for: "claude") == nil)
 }
 
@@ -2365,11 +2639,13 @@ NewWaitSelectsOnlyAfterTheFirstSnapshot()
 try SubmittedChatKeepsTheAgentAndDropsThePrompt()
 try ChatSummarySurvivesLaterStatus()
 QuestionBlurbShowsInEveryStatus()
+try CardQAShowsAnswerAndChoice()
 try AnsweredPermissionIsNotShownAgain()
 try CodexAndClaudeHooksInstallMarkedCommands()
 try HookRetargetPointsAtTheOpenApp()
 try PassiveHooksReportTheShortlist()
 try GeminiHookMapsTheShortlist()
+try GrokBotSessionPublishesTheOpenTurn()
 ConnectorRegistryNamesCursorAndCodex()
 try TaskCuesPlayOncePerTransition()
 LiveHooksFixWhenAsked()
